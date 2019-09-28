@@ -64,7 +64,6 @@ static struct snd_pcm_hardware gvusb2_snd_hw = {
 };
 
 /* predefines */
-int gvusb2_snd_free(struct gvusb2_snd *dev);
 static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev);
 void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev);
 
@@ -117,20 +116,6 @@ void gvusb2_snd_process_pcm(
     return;
 }
 
-static int gvusb2_snd_dev_free(struct snd_device *device)
-{
-    struct gvusb2_snd *dev = device->device_data;
-
-    /* deallocate all sound card device stuff */
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_dev_free()\n");
-
-    return 0;
-}
-
-static struct snd_device_ops gvusb2_snd_device_ops = {
-    .dev_free = gvusb2_snd_dev_free,
-};
-
 static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 {
     int ret;
@@ -161,8 +146,6 @@ static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 static int gvusb2_snd_capture_close(struct snd_pcm_substream *substream)
 {
     struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_capture_cloase(ss)\n");
 
     dev->substream = NULL;
     gvusb2_snd_cancel_isoc(dev);
@@ -195,8 +178,6 @@ static int gvusb2_snd_hw_params(
 
 static int gvusb2_snd_hw_free(struct snd_pcm_substream *substream)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_hw_free(ss)\n");
     if (substream->runtime->dma_bytes > 0) {
         vfree(substream->runtime->dma_area);
     }
@@ -251,6 +232,19 @@ static struct page *gvusb2_snd_pcm_page(
     gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_page(ss)\n");
     return vmalloc_to_page(substream->runtime->dma_area + offset);
 }
+
+static int gvusb2_snd_dev_free(struct snd_device *device)
+{
+    struct gvusb2_snd *dev = device->device_data;
+
+    /* deallocate all sound card device stuff */
+
+    return 0;
+}
+
+static struct snd_device_ops gvusb2_snd_device_ops = {
+    .dev_free = gvusb2_snd_dev_free,
+};
 
 static const struct snd_pcm_ops gvusb2_snd_capture_ops = {
     .open      = gvusb2_snd_capture_open,
@@ -309,6 +303,12 @@ int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
     return 0;
 }
 
+static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
+{
+    snd_card_free_when_closed(dev->card);
+    dev->card = NULL;
+}
+
 /*****************************************************************************
  * USB Stuff
  ****************************************************************************/
@@ -317,7 +317,6 @@ int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev)
 {
     int i;
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_cancel_isoc(dev)\n");
 
     for (i = 0; i < GVUSB2_NUM_URBS; i++) {
         usb_kill_urb(dev->urbs[i]);
@@ -413,26 +412,57 @@ static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev)
     return 0;
 }
 
+static int gvusb2_snd_allocate_urbs(struct gvusb2_snd *dev)
+{
+    int i;
+
+    for(i = 0; i < GVUSB2_NUM_URBS; i++) {
+        struct urb *urb;
+        int total_offset, pidx;
+
+        urb = usb_alloc_urb(GVUSB2_NUM_ISOCH_PACKETS, GFP_KERNEL);
+        if (urb == NULL) {
+            goto free_urbs;
+        }
+        dev->urbs[i] = urb;
+
+        urb->transfer_buffer = kzalloc(
+            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE,
+            GFP_KERNEL);
+        if (urb->transfer_buffer == NULL) {
+            goto free_urbs;
+        }
+
+        urb->dev = dev->gv.udev;
+        urb->pipe = usb_rcvisocpipe(dev->gv.udev, 0x04);
+        urb->transfer_buffer_length =
+            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE;
+        urb->complete = gvusb2_snd_isoc_irq;
+        urb->context = dev;
+        urb->interval = 1;
+        urb->start_frame = 0;
+        urb->number_of_packets = GVUSB2_NUM_ISOCH_PACKETS;
+        urb->transfer_flags = URB_ISO_ASAP;
+
+        total_offset = 0;
+        for (pidx = 0; pidx < GVUSB2_NUM_ISOCH_PACKETS; pidx++) {
+            urb->iso_frame_desc[pidx].offset = total_offset;
+            urb->iso_frame_desc[pidx].length =
+                GVUSB2_MAX_AUDIO_PACKET_SIZE;
+            total_offset += GVUSB2_MAX_AUDIO_PACKET_SIZE;
+        }
+    }
+
+    return 0;
+
+free_urbs:
+    gvusb2_snd_free_isoc(dev);
+    return -ENOMEM;
+}
+
 /*****************************************************************************
  * Driver Stuff
  ****************************************************************************/
-
-int gvusb2_snd_free(struct gvusb2_snd *dev)
-{
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_free(%p)\n", dev);
-
-    /* free sound card */
-    snd_card_free_when_closed(dev->card);
-    dev->card = NULL;
-
-    /* free gvusb2 */
-    gvusb2_free(&dev->gv);
-
-    /* free me */
-    kfree(dev);
-
-    return 0;
-}
 
 int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
@@ -482,22 +512,21 @@ int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
     }
 
     /* initialize gvusb2 core stuff */
-    gvusb2_init(&dev->gv, udev);
+    ret = gvusb2_init(&dev->gv, udev);
+    if (ret < 0) {
+        goto free_dev;
+    }
 
     /* XXX: No hardcoding here. */
     ret = usb_set_interface(udev, 2, 1);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_gvusb2;
     }
 
     /* reset the adc */
     ret = gvusb2_snd_reset_adc(&dev->gv);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_gvusb2;
     }
 
     /* initialize gvusb2_snd data */
@@ -507,55 +536,30 @@ int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
     /* initialize sound stuff */
     ret = gvusb2_snd_alsa_init(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_gvusb2;
     }
 
     /* allocate URBs */
-    for(i = 0; i < GVUSB2_NUM_URBS; i++) {
-        struct urb *urb;
-        int total_offset, pidx;
-
-        urb = usb_alloc_urb(GVUSB2_NUM_ISOCH_PACKETS, GFP_KERNEL);
-        if (urb == NULL) {
-            /* XXX: deallocate things */
-            return 0;
-        }
-        dev->urbs[i] = urb;
-
-        urb->transfer_buffer = kzalloc(
-            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE,
-            GFP_KERNEL);
-        if (urb->transfer_buffer == NULL) {
-            /* XXX: deallocate things */
-            return 0;
-        }
-
-        urb->dev = udev;
-        urb->pipe = usb_rcvisocpipe(udev, 0x04);
-        urb->transfer_buffer_length =
-            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE;
-        urb->complete = gvusb2_snd_isoc_irq;
-        urb->context = dev;
-        urb->interval = 1;
-        urb->start_frame = 0;
-        urb->number_of_packets = GVUSB2_NUM_ISOCH_PACKETS;
-        urb->transfer_flags = URB_ISO_ASAP;
-
-        total_offset = 0;
-        for (pidx = 0; pidx < GVUSB2_NUM_ISOCH_PACKETS; pidx++) {
-            urb->iso_frame_desc[pidx].offset = total_offset;
-            urb->iso_frame_desc[pidx].length =
-                GVUSB2_MAX_AUDIO_PACKET_SIZE;
-            total_offset += GVUSB2_MAX_AUDIO_PACKET_SIZE;
-        }
+    ret = gvusb2_snd_allocate_urbs(dev);
+    if (ret < 0) {
+        goto free_alsa;
     }
 
     /* attach our data to the interface */
     usb_set_intfdata(intf, dev);
 
     return 0;
+
+free_alsa:
+    gvusb2_snd_alsa_free(dev);
+
+free_gvusb2:
+    gvusb2_free(&dev->gv);
+
+free_dev:
+    kfree(dev);
+
+    return ret;
 }
 
 void gvusb2_snd_disconnect(struct usb_interface *intf)
@@ -564,14 +568,18 @@ void gvusb2_snd_disconnect(struct usb_interface *intf)
 
     gvusb2_dbg(&intf->dev, "gvusb2_snd_disconnect(intf)\n");
 
-    /* do we turn off the sound card here? */
-
     /* remove our data from the interface */
     dev = usb_get_intfdata(intf);
     usb_set_intfdata(intf, NULL);
 
-    /* free our data */
-    gvusb2_snd_free(dev);
+    /* free the sound card */
+    gvusb2_snd_alsa_free(dev);
+
+    /* free the internal gvusb2 device */
+    gvusb2_free(&dev->gv);
+
+    /* free me */
+    kfree(dev);
 }
 
 static struct usb_driver gvusb2_snd_usb_driver = {
