@@ -140,30 +140,16 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q, unsigned int count
     /* set seq to 0 */
     dev->sequence = 0;
 
-    /* start tw9910 */
-    v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 1);
-    /* some patches */
-    gvusb2_dbg(&dev->intf->dev, "doing i2c patches\n");
-    reg_0c = i2c_smbus_read_byte_data(&dev->i2c_client, 0x0c);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x1c, 0x08);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x0c, reg_0c | 0x10);
-
-    /* this one is actually needed */
+    /* set cropping */
     reg_07 = i2c_smbus_read_byte_data(&dev->i2c_client, 0x07);
-    reg_55 = i2c_smbus_read_byte_data(&dev->i2c_client, 0x55);
     i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, reg_07 & 0x0f);
     i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x12);
     i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0xf4);
     i2c_smbus_write_byte_data(&dev->i2c_client, 0x0a, 0x12);
     i2c_smbus_write_byte_data(&dev->i2c_client, 0x0b, 0xd2);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x55, (reg_55 & 0xef) | 0x10);
 
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x0d, 0x00);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x0e, 0x11);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x0f, 0x00);
-
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x02, 0x40);
-    i2c_smbus_write_byte_data(&dev->i2c_client, 0x06, 0x42);
+    /* start tw9910 */
+    v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 1);
 
     /* start gvusb2 */
     gvusb2_write_reg(&dev->gv, 0x0100, 0xb3);
@@ -496,16 +482,16 @@ static const struct v4l2_ioctl_ops gvusb2_v4l2_ioctl_ops = {
     .vidioc_unsubscribe_event = v4l2_event_unsubscribe,
 };
 
-//static struct tw9910_video_info gvusb2_tw9910_video_info = {
-//    .buswidth = 8,
-//    .mpout = TW9910_MPO_FIELD,
-//};
-//
-//static struct i2c_board_info gvusb2_tw9910_i2c_board_info = {
-//    .type = "tw9910",
-//    .addr = 0x44,
-//    .platform_data = &gvusb2_tw9910_video_info,
-//};
+static struct tw9910_video_info gvusb2_tw9910_video_info = {
+    .buswidth = 8,
+    .mpout = TW9910_MPO_FIELD,
+};
+
+static struct i2c_board_info gvusb2_tw9910_i2c_board_info = {
+    .type = "tw9910",
+    .addr = 0x44,
+    .platform_data = &gvusb2_tw9910_video_info,
+};
 
 int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 {
@@ -516,18 +502,18 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
             {0x06, 0x00},
             {0x03, 0xa2},
             {0x05, 0x01},
-            {0x08, 0x12},
-            {0x09, 0xf4},
+            //{0x08, 0x12},
+            //{0x09, 0xf4},
             {0x19, 0xde},
             {0x1a, 0x0f},
             {0x1b, 0x00},
-            {0x1c, 0x0f},
-            {0x28, 0x0e},
-            {0x2e, 0xa5},
-            {0x2f, 0x06},
-            {0x6b, 0x26},
-            {0x6c, 0x36},
-            {0x6d, 0xf0},
+            //{0x1c, 0x0f},
+            //{0x28, 0x0e},
+            //{0x2e, 0xa5},
+            //{0x2f, 0x06},
+            //{0x6b, 0x26},
+            //{0x6c, 0x36},
+            //{0x6d, 0xf0},
             {0x6e, 0x28},
             {0x06, 0x80},
             {0xff, 0xff}
@@ -567,16 +553,15 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 
     /* load tw9910 driver */
     /* TODO: fix and then you can load this in again */
-    //dev->sd_tw9910 = v4l2_i2c_new_subdev_board(&dev->v4l2_dev, &dev->adap,
-    //    &gvusb2_tw9910_i2c_board_info, 0);
+    dev->sd_tw9910 = v4l2_i2c_new_subdev_board(&dev->v4l2_dev, &dev->adap,
+        &gvusb2_tw9910_i2c_board_info, 0);
 
     /* init tw9910 */
-    //v4l2_device_call_all(&dev->v4l2_dev, 0, core, reset, 0);
-    v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
-
     for (i = 0; phase6[i].reg != 0xff; i++) {
         i2c_smbus_write_byte_data(&dev->i2c_client, phase6[i].reg, phase6[i].val);
     }
+    //v4l2_device_call_all(&dev->v4l2_dev, 0, core, reset, 0);
+    //v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
     gvusb2_set_reg_mask(&dev->gv, 0x05f0, 0x08, 0x08);
 
