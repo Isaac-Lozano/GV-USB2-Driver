@@ -57,7 +57,7 @@ static struct snd_pcm_hardware gvusb2_snd_hw = {
     .channels_min = 2,
     .channels_max = 2,
     .buffer_bytes_max = (128 * 1024),
-    .period_bytes_min = 0x18000,
+    .period_bytes_min = 0xc000,
     .period_bytes_max = (128 * 1024),
     .periods_min = 1,
     .periods_max = 32,
@@ -235,8 +235,6 @@ static struct page *gvusb2_snd_pcm_page(
 
 static int gvusb2_snd_dev_free(struct snd_device *device)
 {
-    struct gvusb2_snd *dev = device->device_data;
-
     /* deallocate all sound card device stuff */
 
     return 0;
