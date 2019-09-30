@@ -390,6 +390,10 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 
     gvusb2_dbg(&dev->intf->dev, "%s(%lld)\n", __func__, std);
 
+    if (std == dev->standard) {
+        return;
+    }
+
     if (vb2_is_busy(vb2q)) {
         gvusb2_dbg(&dev->intf->dev, "can't set std. busy.\n");
         return -EBUSY;
