@@ -290,11 +290,17 @@ static int gvusb2_vidioc_enum_input(struct file *file, void *priv, struct v4l2_i
 
     gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
-    if (i->index != 0) {
+    switch (i->index) {
+    case GVUSB2_INPUT_COMPOSITE:
+        strncpy(i->name, "Composite", sizeof(i->name));
+        break;
+    case GVUSB2_INPUT_SVIDEO:
+        strncpy(i->name, "S-Video", sizeof(i->name));
+        break;
+    default:
         return -EINVAL;
     }
 
-    strncpy(i->name, "Composite", sizeof(i->name));
     i->type = V4L2_INPUT_TYPE_CAMERA;
     i->capabilities = V4L2_IN_CAP_STD;
     i->std = dev->vdev.tvnorms;
@@ -316,11 +322,32 @@ static int gvusb2_vidioc_g_input(struct file *file, void *priv, unsigned int *i)
 static int gvusb2_vidioc_s_input(struct file *file, void *priv, unsigned int i)
 {
     struct gvusb2_vid *dev = video_drvdata(file);
+    u8 val;
+    s32 reg;
 
     gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
-    if (i != 0) {
+    switch (i) {
+    case GVUSB2_INPUT_COMPOSITE:
+        /* set Composite and Mux 0 */
+        val = 0x00;
+        break;
+    case GVUSB2_INPUT_SVIDEO:
+        /* set S-Video and Mux 1 */
+        val = 0x14;
+        break;
+    default:
         return -EINVAL;
+    }
+
+    reg = i2c_smbus_read_byte_data(&dev->i2c_client, 0x02);
+    if (reg < 0) {
+        return reg;
+    }
+
+    i2c_smbus_write_byte_data(&dev->i2c_client, 0x02, (reg & 0xc3) | val);
+    if (reg < 0) {
+        return reg;
     }
 
     dev->input_num = i;

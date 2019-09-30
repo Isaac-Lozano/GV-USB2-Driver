@@ -9,6 +9,10 @@
 
 #include "gvusb2.h"
 
+#define GVUSB2_INPUT_COMPOSITE 0
+#define GVUSB2_INPUT_SVIDEO    1
+#define GVUSB2_INPUT_MAX_VAL   1
+
 struct gvusb2_vb {
     struct vb2_v4l2_buffer vb;
     struct list_head list;
