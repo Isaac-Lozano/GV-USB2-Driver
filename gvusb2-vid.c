@@ -5,7 +5,7 @@
 
 #include "gvusb2-vid.h"
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 
 static const struct usb_device_id gvusb2_id_table[] = {
     { USB_DEVICE(GVUSB2_VENDOR_ID, GVUSB2_PRODUCT_ID) },

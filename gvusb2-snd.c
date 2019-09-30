@@ -8,7 +8,7 @@
 
 #define CARD_NAME "gvusb2"
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 
 int index;
 char *id;
