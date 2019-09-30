@@ -5,6 +5,8 @@
 
 #include "gvusb2-vid.h"
 
+MODULE_DESCRIPTION("gvusb2 video driver");
+MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
 static const struct usb_device_id gvusb2_id_table[] = {

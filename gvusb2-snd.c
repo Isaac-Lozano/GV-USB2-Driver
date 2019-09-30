@@ -8,6 +8,8 @@
 
 #define CARD_NAME "gvusb2"
 
+MODULE_DESCRIPTION("gvusb2 sound driver");
+MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
 int index;
