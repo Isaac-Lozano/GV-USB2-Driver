@@ -128,7 +128,7 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q, unsigned int count
 {
     int ret;
     struct gvusb2_vid *dev = vb2_get_drv_priv(vb2q);
-    s32 reg_07, reg_0c, reg_55;
+    s32 reg_07;
 
     gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 

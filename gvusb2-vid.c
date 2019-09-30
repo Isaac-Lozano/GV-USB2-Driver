@@ -209,6 +209,21 @@ static void gvusb2_vid_isoc_irq(struct urb *urb)
  * USB functions
  ****************************************************************************/
 
+void gvusb2_vid_free_urbs(struct gvusb2_vid *dev)
+{
+    int i;
+
+    for(i = 0; i < GVUSB2_NUM_URBS; i++) {
+        struct urb *urb = dev->urbs[i];
+        if (urb != NULL) {
+            kfree(urb->transfer_buffer);
+
+            usb_free_urb(urb);
+            dev->urbs[i] = NULL;
+        }
+    }
+}
+
 int gvusb2_vid_allocate_urbs(struct gvusb2_vid *dev)
 {
     int i;
@@ -277,21 +292,6 @@ void gvusb2_vid_cancel_urbs(struct gvusb2_vid *dev)
 
     for (i = 0; i < GVUSB2_NUM_URBS; i++) {
         usb_kill_urb(dev->urbs[i]);
-    }
-}
-
-void gvusb2_vid_free_urbs(struct gvusb2_vid *dev)
-{
-    int i;
-
-    for(i = 0; i < GVUSB2_NUM_URBS; i++) {
-        struct urb *urb = dev->urbs[i];
-        if (urb != NULL) {
-            kfree(urb->transfer_buffer);
-
-            usb_free_urb(urb);
-            dev->urbs[i] = NULL;
-        }
     }
 }
 
