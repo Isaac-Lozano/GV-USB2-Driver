@@ -219,7 +219,7 @@ int gvusb2_vid_allocate_urbs(struct gvusb2_vid *dev)
 
         urb = usb_alloc_urb(GVUSB2_NUM_ISOCH_PACKETS, GFP_KERNEL);
         if (urb == NULL) {
-            /* XXX: deallocate things */
+            gvusb2_vid_free_urbs(dev);
             return -ENOMEM;
         }
         dev->urbs[i] = urb;
@@ -228,7 +228,7 @@ int gvusb2_vid_allocate_urbs(struct gvusb2_vid *dev)
             GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_VIDEO_PACKET_SIZE,
             GFP_KERNEL);
         if (urb->transfer_buffer == NULL) {
-            /* XXX: deallocate things */
+            gvusb2_vid_free_urbs(dev);
             return -ENOMEM;
         }
 
@@ -397,7 +397,8 @@ void gvusb2_release(struct v4l2_device *v4l2_dev)
 
     gvusb2_dbg(&dev->intf->dev, "releasing gvusb2\n");
 
-//    gvusb2_i2c_unregister(dev);
+    gvusb2_i2c_unregister(dev);
+
     v4l2_ctrl_handler_free(&dev->ctrl_handler);
     v4l2_device_unregister(&dev->v4l2_dev);
 
@@ -448,70 +449,67 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
     }
 
     /* initialize gvusb2 core stuff */
-    gvusb2_init(&dev->gv, udev);
+    ret = gvusb2_init(&dev->gv, udev);
+    if (ret < 0) {
+        goto free_dev;
+    }
 
     /* XXX: No hardcoding here. */
     ret = usb_set_interface(udev, 0, 5);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_gvusb2;
     }
-
-//    /* reset the video decoder */
-//    ret = gvusb2_vid_reset_vdec(dev);
-//    if (ret < 0) {
-//        gvusb2_free(&dev->gv);
-//        kfree(dev);
-//        return ret;
-//    }
 
     /* initialize gvusb2_vid data */
     dev->ep = video_ep;
     dev->intf = intf;
 
+    /* initialize the stk1150 in the gvusb2 */
     gvusb2_stk1150_init(dev);
 
     /* allocate URBs */
     gvusb2_vid_allocate_urbs(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_gvusb2;
     }
 
     /* initialize i2c data */
     ret = gvusb2_i2c_register(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto free_urbs;
     }
 
     /* initialize video stuff */
     ret = gvusb2_vb2_setup(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto unregister_i2c;
     }
     ret = gvusb2_v4l2_register(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto unregister_i2c;
     }
     ret = gvusb2_video_register(dev);
     if (ret < 0) {
-        gvusb2_free(&dev->gv);
-        kfree(dev);
-        return ret;
+        goto unregister_v4l2;
     }
 
     /* attach our data to the interface */
     usb_set_intfdata(intf, dev);
 
     return 0;
+
+unregister_v4l2:
+    gvusb2_v4l2_unregister(dev);
+unregister_i2c:
+    gvusb2_i2c_unregister(dev);
+free_urbs:
+    gvusb2_vid_free_urbs(dev);
+free_gvusb2:
+    gvusb2_free(&dev->gv);
+free_dev:
+    kfree(dev);
+
+    return ret;
 }
 
 void gvusb2_vid_disconnect(struct usb_interface *intf)
@@ -542,6 +540,9 @@ void gvusb2_vid_disconnect(struct usb_interface *intf)
 
     mutex_unlock(&dev->v4l2_lock);
     mutex_unlock(&dev->vb2q_lock);
+
+    /* decrease v4l2 refcount */
+    v4l2_device_put(&dev->v4l2_dev);
 }
 
 static struct usb_driver gvusb2_vid_usb_driver = {

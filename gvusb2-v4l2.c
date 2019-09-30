@@ -228,12 +228,8 @@ int gvusb2_vb2_setup(struct gvusb2_vid *dev)
 
     ret = vb2_queue_init(vb2q);
     if (ret < 0) {
-        /* TODO: release list? */
-        /* I don't think it uses heap, though. */
         return ret;
     }
-
-//    v4l2_i2c_new_subdev();
 
     return 0;
 }
@@ -544,15 +540,15 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
         V4L2_CID_SHARPNESS, 0, 15, 1, 0);
 
     if (dev->ctrl_handler.error) {
+        goto free_ctrl_handler;
     }
 
     ret = v4l2_device_register(&dev->intf->dev, &dev->v4l2_dev);
     if (ret < 0) {
-        return ret;
+        goto free_ctrl_handler;
     }
 
     /* load tw9910 driver */
-    /* TODO: fix and then you can load this in again */
     dev->sd_tw9910 = v4l2_i2c_new_subdev_board(&dev->v4l2_dev, &dev->adap,
         &gvusb2_tw9910_i2c_board_info, 0);
 
@@ -560,12 +556,22 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
     for (i = 0; phase6[i].reg != 0xff; i++) {
         i2c_smbus_write_byte_data(&dev->i2c_client, phase6[i].reg, phase6[i].val);
     }
-    //v4l2_device_call_all(&dev->v4l2_dev, 0, core, reset, 0);
-    //v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
+    /* set STK1150 to always double word */
+    /* not quite sure the importance */
     gvusb2_set_reg_mask(&dev->gv, 0x05f0, 0x08, 0x08);
 
     return 0;
+
+free_ctrl_handler:
+    v4l2_ctrl_handler_free(&dev->ctrl_handler);
+
+    return ret;
+}
+
+void gvusb2_v4l2_unregister(struct gvusb2_vid *dev)
+{
+    v4l2_device_unregister(&dev->v4l2_dev);
 }
 
 static const struct v4l2_file_operations gvusb2_v4l2_fops = {

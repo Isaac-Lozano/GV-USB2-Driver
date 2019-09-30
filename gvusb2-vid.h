@@ -59,9 +59,11 @@ void get_resolution(struct gvusb2_vid *dev, int *width, int *height);
 void gvusb2_vid_clear_queue(struct gvusb2_vid *dev);
 int gvusb2_vb2_setup(struct gvusb2_vid *dev);
 int gvusb2_v4l2_register(struct gvusb2_vid *dev);
+void gvusb2_v4l2_unregister(struct gvusb2_vid *dev);
 int gvusb2_video_register(struct gvusb2_vid *dev);
 
 /* provided by gvusb2-i2c.c */
 int gvusb2_i2c_register(struct gvusb2_vid *dev);
+int gvusb2_i2c_unregister(struct gvusb2_vid *dev);
 
 #endif
