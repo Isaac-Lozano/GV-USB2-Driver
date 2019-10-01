@@ -391,7 +391,7 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
     gvusb2_dbg(&dev->intf->dev, "%s(%lld)\n", __func__, std);
 
     if (std == dev->standard) {
-        return;
+        return 0;
     }
 
     if (vb2_is_busy(vb2q)) {
@@ -571,8 +571,12 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
         V4L2_CID_SHARPNESS, 0, 15, 1, 0);
 
     if (dev->ctrl_handler.error) {
+        ret = dev->ctrl_handler.error;
         goto free_ctrl_handler;
     }
+
+    /* initialize control to default values */
+    v4l2_ctrl_handler_setup(&dev->ctrl_handler);
 
     ret = v4l2_device_register(&dev->intf->dev, &dev->v4l2_dev);
     if (ret < 0) {
