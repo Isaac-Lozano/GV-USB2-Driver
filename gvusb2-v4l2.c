@@ -214,8 +214,7 @@ int gvusb2_vb2_setup(struct gvusb2_vid *dev)
 
     vb2q = &dev->vb2q;
     vb2q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    /* add more io modes? */
-    vb2q->io_modes = VB2_MMAP;
+    vb2q->io_modes = VB2_MMAP | VB2_READ | VB2_USERPTR;
     vb2q->drv_priv = dev;
     vb2q->buf_struct_size = sizeof(struct gvusb2_vb);
     vb2q->ops = &gvusb2_vb2_ops;
@@ -500,6 +499,7 @@ static const struct v4l2_ioctl_ops gvusb2_v4l2_ioctl_ops = {
     .vidioc_querybuf          = vb2_ioctl_querybuf,
     .vidioc_qbuf              = vb2_ioctl_qbuf,
     .vidioc_dqbuf             = vb2_ioctl_dqbuf,
+    .vidioc_create_bufs       = vb2_ioctl_create_bufs,
     .vidioc_streamon          = vb2_ioctl_streamon,
     .vidioc_streamoff         = vb2_ioctl_streamoff,
     .vidioc_expbuf            = vb2_ioctl_expbuf,
