@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ OR BSD-3-Clause */
 #ifndef __GVUSB2_REGS_H__
 #define __GVUSB2_REGS_H__
 

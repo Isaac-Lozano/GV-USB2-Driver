@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+ OR BSD-3-Clause
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
@@ -24,289 +25,292 @@ module_param(enable, bool, 0444);
 MODULE_PARM_DESC(enable, "Enable " CARD_NAME " soundcard.");
 
 static const struct usb_device_id gvusb2_id_table[] = {
-    { USB_DEVICE(GVUSB2_VENDOR_ID, GVUSB2_PRODUCT_ID) },
-    { }
+	{ USB_DEVICE(GVUSB2_VENDOR_ID, GVUSB2_PRODUCT_ID) },
+	{ }
 };
 MODULE_DEVICE_TABLE(usb, gvusb2_id_table);
 
 struct gvusb2_snd {
-    struct gvusb2_dev gv;
-    struct usb_interface *intf;
-    struct usb_endpoint_descriptor *ep;
+	struct gvusb2_dev gv;
+	struct usb_interface *intf;
+	struct usb_endpoint_descriptor *ep;
 
-    /* urb */
-    struct urb *urbs[GVUSB2_NUM_URBS];
+	/* urb */
+	struct urb *urbs[GVUSB2_NUM_URBS];
 
-    /* alsa */
-    struct snd_card *card;
-    struct snd_pcm *pcm;
-    struct snd_pcm_substream *substream;
-    int dma_offset;
-    int avail;
-    int hw_ptr;
-    spinlock_t lock;
+	/* alsa */
+	struct snd_card *card;
+	struct snd_pcm *pcm;
+	struct snd_pcm_substream *substream;
+	int dma_offset;
+	int avail;
+	int hw_ptr;
+	spinlock_t lock;
 };
 
 static struct snd_pcm_hardware gvusb2_snd_hw = {
-    .info = (SNDRV_PCM_INFO_MMAP |
-        SNDRV_PCM_INFO_INTERLEAVED |
-        SNDRV_PCM_INFO_BLOCK_TRANSFER |
-        SNDRV_PCM_INFO_MMAP_VALID),
-    .formats = SNDRV_PCM_FMTBIT_S16_LE,
-    .rates = SNDRV_PCM_RATE_48000,
-    .rate_min = 48000,
-    .rate_max = 48000,
-    .channels_min = 2,
-    .channels_max = 2,
-    .buffer_bytes_max = (128 * 1024),
-    .period_bytes_min = 0xc000,
-    .period_bytes_max = (128 * 1024),
-    .periods_min = 1,
-    .periods_max = 32,
+	.info = (SNDRV_PCM_INFO_MMAP |
+		SNDRV_PCM_INFO_INTERLEAVED |
+		SNDRV_PCM_INFO_BLOCK_TRANSFER |
+		SNDRV_PCM_INFO_MMAP_VALID),
+	.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	.rates = SNDRV_PCM_RATE_48000,
+	.rate_min = 48000,
+	.rate_max = 48000,
+	.channels_min = 2,
+	.channels_max = 2,
+	.buffer_bytes_max = (128 * 1024),
+	.period_bytes_min = 0xc000,
+	.period_bytes_max = (128 * 1024),
+	.periods_min = 1,
+	.periods_max = 32,
 };
 
 /* predefines */
 static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev);
-void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev);
+static void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev);
 
 /*****************************************************************************
  *  Alsa Stuff
  ****************************************************************************/
 
 void gvusb2_snd_process_pcm(
-    struct gvusb2_snd *dev,
-    unsigned char *buf,
-    unsigned int len)
+	struct gvusb2_snd *dev,
+	unsigned char *buf,
+	unsigned int len)
 {
-    unsigned long flags;
-    struct snd_pcm_runtime *runtime = dev->substream->runtime;
-    int frames = bytes_to_frames(runtime, len);
+	unsigned long flags;
+	struct snd_pcm_runtime *runtime = dev->substream->runtime;
+	int frames = bytes_to_frames(runtime, len);
 
 //    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_process_pcm()\n");
 //    gvusb2_dbg(&dev->intf->dev, "len %d\n", len);
 //    gvusb2_dbg(&dev->intf->dev, "avail %d\n", dev->avail);
 
-    spin_lock_irqsave(&dev->lock, flags);
-    dev->hw_ptr += frames;
-    if (dev->hw_ptr >= runtime->buffer_size) {
-        dev->hw_ptr -= runtime->buffer_size;
-    }
-    dev->avail += frames;
-    spin_unlock_irqrestore(&dev->lock, flags);
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->hw_ptr += frames;
+	if (dev->hw_ptr >= runtime->buffer_size)
+		dev->hw_ptr -= runtime->buffer_size;
 
-    if (dev->dma_offset + len > runtime->dma_bytes) {
-        int len_to_copy = runtime->dma_bytes - dev->dma_offset;
+	dev->avail += frames;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
-        memcpy(runtime->dma_area + dev->dma_offset, buf, len_to_copy);
+	if (dev->dma_offset + len > runtime->dma_bytes) {
+		int len_to_copy = runtime->dma_bytes - dev->dma_offset;
 
-        len -= len_to_copy;
-        buf += len_to_copy;
-        dev->dma_offset = 0;
-    }
+		memcpy(runtime->dma_area + dev->dma_offset, buf, len_to_copy);
 
-    memcpy(runtime->dma_area + dev->dma_offset, buf, len);
-    dev->dma_offset += len;
+		len -= len_to_copy;
+		buf += len_to_copy;
+		dev->dma_offset = 0;
+	}
 
-    spin_lock_irqsave(&dev->lock, flags);
-    if (dev->avail >= runtime->period_size) {
-        dev->avail -= runtime->period_size;
-        spin_unlock_irqrestore(&dev->lock, flags);
-        snd_pcm_period_elapsed(dev->substream);
-        return;
-    }
-    spin_unlock_irqrestore(&dev->lock, flags);
-    return;
+	memcpy(runtime->dma_area + dev->dma_offset, buf, len);
+	dev->dma_offset += len;
+
+	spin_lock_irqsave(&dev->lock, flags);
+	if (dev->avail >= runtime->period_size) {
+		dev->avail -= runtime->period_size;
+		spin_unlock_irqrestore(&dev->lock, flags);
+		snd_pcm_period_elapsed(dev->substream);
+		return;
+	}
+	spin_unlock_irqrestore(&dev->lock, flags);
 }
 
 static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 {
-    int ret;
-    unsigned long flags;
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-    struct snd_pcm_runtime *runtime = substream->runtime;
+	int ret;
+	unsigned long flags;
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
 
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_capture_open(ss)\n");
+	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
 
-    ret = gvusb2_snd_submit_isoc(dev);
-    if (ret < 0) {
-        return ret;
-    }
+	ret = gvusb2_snd_submit_isoc(dev);
+	if (ret < 0)
+		return ret;
 
-    spin_lock_irqsave(&dev->lock, flags);
-    if (dev->substream == NULL) {
-        dev->substream = substream;
-        runtime->hw = gvusb2_snd_hw;
-        ret = 0;
-    } else {
-        ret = -EBUSY;
-    }
-    spin_unlock_irqrestore(&dev->lock, flags);
+	spin_lock_irqsave(&dev->lock, flags);
+	if (dev->substream == NULL) {
+		dev->substream = substream;
+		runtime->hw = gvusb2_snd_hw;
+		ret = 0;
+	} else {
+		ret = -EBUSY;
+	}
+	spin_unlock_irqrestore(&dev->lock, flags);
 
-    return ret;
+	return ret;
 }
 
 static int gvusb2_snd_capture_close(struct snd_pcm_substream *substream)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-    dev->substream = NULL;
-    gvusb2_snd_cancel_isoc(dev);
+	dev->substream = NULL;
+	gvusb2_snd_cancel_isoc(dev);
 
-    return 0;
+	return 0;
 }
 
 static int gvusb2_snd_hw_params(
-    struct snd_pcm_substream *substream,
-    struct snd_pcm_hw_params *hw_params)
+	struct snd_pcm_substream *substream,
+	struct snd_pcm_hw_params *hw_params)
 {
-    unsigned int bytes;
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	unsigned int bytes;
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_hw_params(ss)\n");
+	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
 
-    bytes = params_buffer_bytes(hw_params);
-    if (substream->runtime->dma_bytes > 0) {
-        vfree(substream->runtime->dma_area);
-    }
-    substream->runtime->dma_bytes = 0;
-    substream->runtime->dma_area = vmalloc(bytes);
-    if (substream->runtime->dma_area == NULL) {
-        return -ENOMEM;
-    }
-    substream->runtime->dma_bytes = bytes;
+	bytes = params_buffer_bytes(hw_params);
+	if (substream->runtime->dma_bytes > 0)
+		vfree(substream->runtime->dma_area);
 
-    return 0;
+	substream->runtime->dma_bytes = 0;
+	substream->runtime->dma_area = vmalloc(bytes);
+	if (substream->runtime->dma_area == NULL)
+		return -ENOMEM;
+
+	substream->runtime->dma_bytes = bytes;
+
+	return 0;
 }
 
 static int gvusb2_snd_hw_free(struct snd_pcm_substream *substream)
 {
-    if (substream->runtime->dma_bytes > 0) {
-        vfree(substream->runtime->dma_area);
-    }
-    substream->runtime->dma_bytes = 0;
+	if (substream->runtime->dma_bytes > 0)
+		vfree(substream->runtime->dma_area);
 
-    return 0;
+	substream->runtime->dma_bytes = 0;
+
+	return 0;
 }
 
 static int gvusb2_snd_pcm_prepare(struct snd_pcm_substream *substream)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_prepare(ss)\n");
-    return 0;
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+
+	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
+
+	return 0;
 }
 
 /* NOTE: THIS IS ATOMIC */
 static int gvusb2_snd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_trigger(ss, %d)\n", cmd);
-//    gvusb2_dbg(&dev->intf->dev, "period frames %lu\n", substream->runtime->period_size);
+	gvusb2_dbg(&dev->intf->dev, "%s(ss, %d)\n", __func__, cmd);
 
-    switch (cmd) {
-    case SNDRV_PCM_TRIGGER_START:
-        return 0;
-    case SNDRV_PCM_TRIGGER_STOP:
-        dev->dma_offset = 0;
-        dev->hw_ptr = 0;
-        dev->avail = 0;
-        return 0;
-    default:
-        return -EINVAL;
-    }
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+		return 0;
+	case SNDRV_PCM_TRIGGER_STOP:
+		dev->dma_offset = 0;
+		dev->hw_ptr = 0;
+		dev->avail = 0;
+		return 0;
+	default:
+		return -EINVAL;
+	}
 
-    return 0;
+	return 0;
 }
 
 /* NOTE: THIS IS ATOMIC */
-static snd_pcm_uframes_t gvusb2_snd_pcm_pointer(struct snd_pcm_substream *substream)
+static snd_pcm_uframes_t gvusb2_snd_pcm_pointer(
+	struct snd_pcm_substream *substream)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 //    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_pointer(ss)\n");
-    return dev->hw_ptr;
+	return dev->hw_ptr;
 }
 
 static struct page *gvusb2_snd_pcm_page(
-    struct snd_pcm_substream *substream,
-    unsigned long offset)
+	struct snd_pcm_substream *substream,
+	unsigned long offset)
 {
-    struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_page(ss)\n");
-    return vmalloc_to_page(substream->runtime->dma_area + offset);
+	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+
+	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
+
+	return vmalloc_to_page(substream->runtime->dma_area + offset);
 }
 
 static int gvusb2_snd_dev_free(struct snd_device *device)
 {
-    /* deallocate all sound card device stuff */
+	/* deallocate all sound card device stuff */
 
-    return 0;
+	return 0;
 }
 
 static struct snd_device_ops gvusb2_snd_device_ops = {
-    .dev_free = gvusb2_snd_dev_free,
+	.dev_free = gvusb2_snd_dev_free,
 };
 
 static const struct snd_pcm_ops gvusb2_snd_capture_ops = {
-    .open      = gvusb2_snd_capture_open,
-    .close     = gvusb2_snd_capture_close,
-    .ioctl     = snd_pcm_lib_ioctl,
-    .hw_params = gvusb2_snd_hw_params,
-    .hw_free   = gvusb2_snd_hw_free,
-    .prepare   = gvusb2_snd_pcm_prepare,
-    .trigger   = gvusb2_snd_pcm_trigger,
-    .pointer   = gvusb2_snd_pcm_pointer,
-    .page      = gvusb2_snd_pcm_page,
+	.open      = gvusb2_snd_capture_open,
+	.close     = gvusb2_snd_capture_close,
+	.ioctl     = snd_pcm_lib_ioctl,
+	.hw_params = gvusb2_snd_hw_params,
+	.hw_free   = gvusb2_snd_hw_free,
+	.prepare   = gvusb2_snd_pcm_prepare,
+	.trigger   = gvusb2_snd_pcm_trigger,
+	.pointer   = gvusb2_snd_pcm_pointer,
+	.page      = gvusb2_snd_pcm_page,
 };
 
 int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 {
-    int ret;
+	int ret;
 
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_alsa_init(dev)\n");
+	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
 
-    spin_lock_init(&dev->lock);
-    dev->hw_ptr = dev->dma_offset = dev->avail = 0;
+	spin_lock_init(&dev->lock);
+	dev->hw_ptr = dev->dma_offset = dev->avail = 0;
 
-    ret = snd_card_new(&dev->intf->dev, index, id, THIS_MODULE, 0, &dev->card);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = snd_device_new(dev->card, SNDRV_DEV_LOWLEVEL, dev,
-        &gvusb2_snd_device_ops);
-    if (ret < 0) {
-        snd_card_free(dev->card);
-        return ret;
-    }
+	ret = snd_card_new(&dev->intf->dev, index, id, THIS_MODULE, 0,
+			&dev->card);
+	if (ret < 0)
+		return ret;
 
-    ret = snd_pcm_new(dev->card, "analog in", 0, 0, 1, &dev->pcm);
-    if (ret < 0) {
-        snd_card_free(dev->card);
-        return ret;
-    }
+	ret = snd_device_new(dev->card, SNDRV_DEV_LOWLEVEL, dev,
+		&gvusb2_snd_device_ops);
+	if (ret < 0) {
+		snd_card_free(dev->card);
+		return ret;
+	}
 
-    dev->pcm->private_data = dev;
+	ret = snd_pcm_new(dev->card, "analog in", 0, 0, 1, &dev->pcm);
+	if (ret < 0) {
+		snd_card_free(dev->card);
+		return ret;
+	}
 
-    snd_pcm_set_ops(dev->pcm, SNDRV_PCM_STREAM_CAPTURE,
-        &gvusb2_snd_capture_ops);
+	dev->pcm->private_data = dev;
 
-    strscpy(dev->card->shortname, "gvusb2", sizeof(dev->card->shortname));
-    strscpy(dev->card->longname, "gvusb2", sizeof(dev->card->longname));
-    strscpy(dev->card->driver, "gvusb2-snd", sizeof(dev->card->driver));
+	snd_pcm_set_ops(dev->pcm, SNDRV_PCM_STREAM_CAPTURE,
+		&gvusb2_snd_capture_ops);
 
-    /* register the card */
-    ret = snd_card_register(dev->card);
-    if (ret < 0) {
-        snd_card_free(dev->card);
-        return ret;
-    }
+	strscpy(dev->card->shortname, "gvusb2", sizeof(dev->card->shortname));
+	strscpy(dev->card->longname, "gvusb2", sizeof(dev->card->longname));
+	strscpy(dev->card->driver, "gvusb2-snd", sizeof(dev->card->driver));
 
-    return 0;
+	/* register the card */
+	ret = snd_card_register(dev->card);
+	if (ret < 0) {
+		snd_card_free(dev->card);
+		return ret;
+	}
+
+	return 0;
 }
 
 static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
 {
-    snd_card_free_when_closed(dev->card);
-    dev->card = NULL;
+	snd_card_free_when_closed(dev->card);
+	dev->card = NULL;
 }
 
 /*****************************************************************************
@@ -316,148 +320,147 @@ static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
 /* Do not call in atomic contexts */
 void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev)
 {
-    int i;
+	int i;
 
-    for (i = 0; i < GVUSB2_NUM_URBS; i++) {
-        usb_kill_urb(dev->urbs[i]);
-    }
+	for (i = 0; i < GVUSB2_NUM_URBS; i++)
+		usb_kill_urb(dev->urbs[i]);
 }
 
 void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
 {
-    int i;
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_free_isoc(dev)\n");
+	int i;
 
-    for (i = 0; i < GVUSB2_NUM_URBS; i++) {
-        struct urb *urb = dev->urbs[i];
-        if(urb != NULL) {
-            if (urb->transfer_buffer != NULL) {
-                kfree(urb->transfer_buffer);
-            }
-            usb_free_urb(urb);
-            dev->urbs[i] = NULL;
-        }
-    }
+	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
+
+	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
+		struct urb *urb = dev->urbs[i];
+
+		if (urb != NULL) {
+			if (urb->transfer_buffer != NULL)
+				kfree(urb->transfer_buffer);
+			usb_free_urb(urb);
+			dev->urbs[i] = NULL;
+		}
+	}
 }
 
 void gvusb2_snd_process_isoc(struct gvusb2_snd *dev, struct urb *urb)
 {
-    int i;
-    unsigned char *buf_iter;
+	int i;
+	unsigned char *buf_iter;
 //    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_process_isoc(dev)\n");
 
-    if (dev->substream == NULL) {
-        gvusb2_dbg(&dev->intf->dev, "substream is null, skipping processing\n");
-        return;
-    }
+	if (dev->substream == NULL) {
+		gvusb2_dbg(&dev->intf->dev, "substream is null, skipping processing\n");
+		return;
+	}
 
-    buf_iter = urb->transfer_buffer;
-    for (i = 0; i < urb->number_of_packets; i++) {
-        if (urb->iso_frame_desc[i].status < 0) {
-            gvusb2_dbg(&dev->intf->dev, "bad iso packet. skipping.\n");
-        } else {
-            gvusb2_snd_process_pcm(dev,
-                buf_iter, urb->iso_frame_desc[i].actual_length);
-        }
+	buf_iter = urb->transfer_buffer;
+	for (i = 0; i < urb->number_of_packets; i++) {
+		if (urb->iso_frame_desc[i].status < 0) {
+			gvusb2_dbg(&dev->intf->dev, "bad iso packet. skipping.\n");
+		} else {
+			gvusb2_snd_process_pcm(dev,
+				buf_iter, urb->iso_frame_desc[i].actual_length);
+		}
 
-        buf_iter += urb->iso_frame_desc[i].length;
-    }
+		buf_iter += urb->iso_frame_desc[i].length;
+	}
 }
 
 static void gvusb2_snd_isoc_irq(struct urb *urb)
 {
-    int i, ret;
-    struct gvusb2_snd *dev = urb->context;
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_isoc_irq(dev)\n");
+	int i, ret;
+	struct gvusb2_snd *dev = urb->context;
 
+	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
 
-    switch (urb->status) {
-    case 0:
-        break;
-    case -ECONNRESET:
-    case -ENOENT:
-    case -ESHUTDOWN:
-        return;
-    default:
-        gvusb2_dbg(&dev->intf->dev, "urb error! status %d\n", urb->status);
-        return;
-    }
+	switch (urb->status) {
+	case 0:
+		break;
+	case -ECONNRESET:
+	case -ENOENT:
+	case -ESHUTDOWN:
+		return;
+	default:
+		gvusb2_dbg(&dev->intf->dev, "urb error! status %d\n",
+			urb->status);
+		return;
+	}
 
-    gvusb2_snd_process_isoc(dev, urb);
+	gvusb2_snd_process_isoc(dev, urb);
 
-    for (i = 0; i < urb->number_of_packets; i++) {
-        urb->iso_frame_desc[i].status = 0;
-        urb->iso_frame_desc[i].actual_length = 0;
-    }
+	for (i = 0; i < urb->number_of_packets; i++) {
+		urb->iso_frame_desc[i].status = 0;
+		urb->iso_frame_desc[i].actual_length = 0;
+	}
 
-    ret = usb_submit_urb(urb, GFP_ATOMIC);
-    if (ret) {
-        gvusb2_dbg(&dev->intf->dev, "urb resubmit failed (%d)\n", ret);
-    }
+	ret = usb_submit_urb(urb, GFP_ATOMIC);
+	if (ret)
+		gvusb2_dbg(&dev->intf->dev, "urb resubmit failed (%d)\n", ret);
 }
 
 static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev)
 {
-    int i, ret;
+	int i, ret;
 
-    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_submit_isoc(dev)\n");
-    for (i = 0; i < GVUSB2_NUM_URBS; i++) {
-        ret = usb_submit_urb(dev->urbs[i], GFP_KERNEL);
-        if (ret < 0) {
-            /* TODO: clean up */
-            gvusb2_dbg(&dev->intf->dev, "error submitting urb %d\n", ret);
-        }
-    }
+	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
+	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
+		ret = usb_submit_urb(dev->urbs[i], GFP_KERNEL);
+		if (ret < 0)
+			/* TODO: clean up */
+			gvusb2_dbg(&dev->intf->dev,
+				"error submitting urb %d\n", ret);
+	}
 
-    return 0;
+	return 0;
 }
 
 static int gvusb2_snd_allocate_urbs(struct gvusb2_snd *dev)
 {
-    int i;
+	int i;
 
-    for(i = 0; i < GVUSB2_NUM_URBS; i++) {
-        struct urb *urb;
-        int total_offset, pidx;
+	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
+		struct urb *urb;
+		int total_offset, pidx;
 
-        urb = usb_alloc_urb(GVUSB2_NUM_ISOCH_PACKETS, GFP_KERNEL);
-        if (urb == NULL) {
-            goto free_urbs;
-        }
-        dev->urbs[i] = urb;
+		urb = usb_alloc_urb(GVUSB2_NUM_ISOCH_PACKETS, GFP_KERNEL);
+		if (urb == NULL)
+			goto free_urbs;
 
-        urb->transfer_buffer = kzalloc(
-            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE,
-            GFP_KERNEL);
-        if (urb->transfer_buffer == NULL) {
-            goto free_urbs;
-        }
+		dev->urbs[i] = urb;
 
-        urb->dev = dev->gv.udev;
-        urb->pipe = usb_rcvisocpipe(dev->gv.udev, 0x04);
-        urb->transfer_buffer_length =
-            GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE;
-        urb->complete = gvusb2_snd_isoc_irq;
-        urb->context = dev;
-        urb->interval = 1;
-        urb->start_frame = 0;
-        urb->number_of_packets = GVUSB2_NUM_ISOCH_PACKETS;
-        urb->transfer_flags = URB_ISO_ASAP;
+		urb->transfer_buffer = kzalloc(
+			GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE,
+			GFP_KERNEL);
+		if (urb->transfer_buffer == NULL)
+			goto free_urbs;
 
-        total_offset = 0;
-        for (pidx = 0; pidx < GVUSB2_NUM_ISOCH_PACKETS; pidx++) {
-            urb->iso_frame_desc[pidx].offset = total_offset;
-            urb->iso_frame_desc[pidx].length =
-                GVUSB2_MAX_AUDIO_PACKET_SIZE;
-            total_offset += GVUSB2_MAX_AUDIO_PACKET_SIZE;
-        }
-    }
+		urb->dev = dev->gv.udev;
+		urb->pipe = usb_rcvisocpipe(dev->gv.udev, 0x04);
+		urb->transfer_buffer_length =
+			GVUSB2_NUM_ISOCH_PACKETS * GVUSB2_MAX_AUDIO_PACKET_SIZE;
+		urb->complete = gvusb2_snd_isoc_irq;
+		urb->context = dev;
+		urb->interval = 1;
+		urb->start_frame = 0;
+		urb->number_of_packets = GVUSB2_NUM_ISOCH_PACKETS;
+		urb->transfer_flags = URB_ISO_ASAP;
 
-    return 0;
+		total_offset = 0;
+		for (pidx = 0; pidx < GVUSB2_NUM_ISOCH_PACKETS; pidx++) {
+			urb->iso_frame_desc[pidx].offset = total_offset;
+			urb->iso_frame_desc[pidx].length =
+				GVUSB2_MAX_AUDIO_PACKET_SIZE;
+			total_offset += GVUSB2_MAX_AUDIO_PACKET_SIZE;
+		}
+	}
+
+	return 0;
 
 free_urbs:
-    gvusb2_snd_free_isoc(dev);
-    return -ENOMEM;
+	gvusb2_snd_free_isoc(dev);
+	return -ENOMEM;
 }
 
 /*****************************************************************************
@@ -466,127 +469,121 @@ free_urbs:
 
 int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
-    struct usb_device *udev;
-    struct gvusb2_snd *dev;
-    int i, ret;
-    struct usb_endpoint_descriptor *audio_ep = NULL;
+	struct usb_device *udev;
+	struct gvusb2_snd *dev;
+	int i, ret;
+	struct usb_endpoint_descriptor *audio_ep = NULL;
 
-    gvusb2_dbg(&intf->dev, "gvusb2_snd_probe(intf, id)\n");
+	gvusb2_dbg(&intf->dev, "%s(intf, id)\n", __func__);
 
-    udev = interface_to_usbdev(intf);
+	udev = interface_to_usbdev(intf);
 
-    /*
-     * The GV-USB2 uses a proprietary audio transfer, but the chip has support
-     * for the USB audio class, so let's reject it if we see it.
-     */
-    if (intf->altsetting[0].desc.bInterfaceClass == USB_CLASS_AUDIO) {
-        return -ENODEV;
-    }
+	/*
+	 * The GV-USB2 uses a proprietary audio transfer, but the chip has
+	 * support for the USB audio class, so let's reject it if we see it.
+	 */
+	if (intf->altsetting[0].desc.bInterfaceClass == USB_CLASS_AUDIO)
+		return -ENODEV;
 
-    /* check if we're on the audio interface */
-    for (i = 0; i < intf->num_altsetting; i++) {
-        int ep;
-        for (ep = 0; ep < intf->altsetting[i].desc.bNumEndpoints; ep++) {
-            struct usb_endpoint_descriptor *e =
-                &intf->altsetting[i].endpoint[ep].desc;
-            if (usb_endpoint_dir_in(e) &&
-                    e->bEndpointAddress == 0x84 &&
-                    usb_endpoint_xfer_isoc(e) &&
-                    e->wMaxPacketSize == 0x100) {
-                audio_ep = e;
-                gvusb2_dbg(&intf->dev, "found audio at altsetting %d endpoint %d\n",
-                    i, ep);
-            }
-        }
-    }
+	/* check if we're on the audio interface */
+	for (i = 0; i < intf->num_altsetting; i++) {
+		int ep;
+		int num_endpoints = intf->altsetting[i].desc.bNumEndpoints;
 
-    /* if we don't have an audio device, we don't accept */
-    if (audio_ep == NULL) {
-        return -ENODEV;
-    }
+		for (ep = 0; ep < num_endpoints; ep++) {
+			struct usb_endpoint_descriptor *e =
+				&intf->altsetting[i].endpoint[ep].desc;
+			if (usb_endpoint_dir_in(e) &&
+					e->bEndpointAddress == 0x84 &&
+					usb_endpoint_xfer_isoc(e) &&
+					e->wMaxPacketSize == 0x100) {
+				audio_ep = e;
+				gvusb2_dbg(&intf->dev, "found audio at altsetting %d endpoint %d\n",
+					i, ep);
+			}
+		}
+	}
 
-    /* allocate our driver data */
-    dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-    if (dev == NULL) {
-        return -ENOMEM;
-    }
+	/* if we don't have an audio device, we don't accept */
+	if (audio_ep == NULL)
+		return -ENODEV;
 
-    /* initialize gvusb2 core stuff */
-    ret = gvusb2_init(&dev->gv, udev);
-    if (ret < 0) {
-        goto free_dev;
-    }
+	/* allocate our driver data */
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	if (dev == NULL)
+		return -ENOMEM;
 
-    /* XXX: No hardcoding here. */
-    ret = usb_set_interface(udev, 2, 1);
-    if (ret < 0) {
-        goto free_gvusb2;
-    }
+	/* initialize gvusb2 core stuff */
+	ret = gvusb2_init(&dev->gv, udev);
+	if (ret < 0)
+		goto free_dev;
 
-    /* reset the adc */
-    ret = gvusb2_snd_reset_adc(&dev->gv);
-    if (ret < 0) {
-        goto free_gvusb2;
-    }
+	/* XXX: No hardcoding here. */
+	ret = usb_set_interface(udev, 2, 1);
+	if (ret < 0)
+		goto free_gvusb2;
 
-    /* initialize gvusb2_snd data */
-    dev->ep = audio_ep;
-    dev->intf = intf;
+	/* reset the adc */
+	ret = gvusb2_snd_reset_adc(&dev->gv);
+	if (ret < 0)
+		goto free_gvusb2;
 
-    /* initialize sound stuff */
-    ret = gvusb2_snd_alsa_init(dev);
-    if (ret < 0) {
-        goto free_gvusb2;
-    }
+	/* initialize gvusb2_snd data */
+	dev->ep = audio_ep;
+	dev->intf = intf;
 
-    /* allocate URBs */
-    ret = gvusb2_snd_allocate_urbs(dev);
-    if (ret < 0) {
-        goto free_alsa;
-    }
+	/* initialize sound stuff */
+	ret = gvusb2_snd_alsa_init(dev);
+	if (ret < 0)
+		goto free_gvusb2;
 
-    /* attach our data to the interface */
-    usb_set_intfdata(intf, dev);
+	/* allocate URBs */
+	ret = gvusb2_snd_allocate_urbs(dev);
+	if (ret < 0)
+		goto free_alsa;
 
-    return 0;
+	/* attach our data to the interface */
+	usb_set_intfdata(intf, dev);
+
+	return 0;
 
 free_alsa:
-    gvusb2_snd_alsa_free(dev);
+	gvusb2_snd_alsa_free(dev);
 
 free_gvusb2:
-    gvusb2_free(&dev->gv);
+	gvusb2_free(&dev->gv);
 
 free_dev:
-    kfree(dev);
+	kfree(dev);
 
-    return ret;
+	return ret;
 }
 
 void gvusb2_snd_disconnect(struct usb_interface *intf)
 {
-    struct gvusb2_snd *dev;
+	struct gvusb2_snd *dev;
 
-    gvusb2_dbg(&intf->dev, "gvusb2_snd_disconnect(intf)\n");
+	gvusb2_dbg(&intf->dev, "%s(intf)\n", __func__);
 
-    /* remove our data from the interface */
-    dev = usb_get_intfdata(intf);
-    usb_set_intfdata(intf, NULL);
+	/* remove our data from the interface */
+	dev = usb_get_intfdata(intf);
+	usb_set_intfdata(intf, NULL);
 
-    /* free the sound card */
-    gvusb2_snd_alsa_free(dev);
+	/* free the sound card */
+	gvusb2_snd_alsa_free(dev);
 
-    /* free the internal gvusb2 device */
-    gvusb2_free(&dev->gv);
+	/* free the internal gvusb2 device */
+	gvusb2_free(&dev->gv);
 
-    /* free me */
-    kfree(dev);
+	/* free me */
+	kfree(dev);
 }
 
 static struct usb_driver gvusb2_snd_usb_driver = {
-    .name = "gvusb2-snd",
-    .probe = gvusb2_snd_probe,
-    .disconnect = gvusb2_snd_disconnect,
-    .id_table = gvusb2_id_table,
+	.name = "gvusb2-snd",
+	.probe = gvusb2_snd_probe,
+	.disconnect = gvusb2_snd_disconnect,
+	.id_table = gvusb2_id_table,
 };
 
 module_usb_driver(gvusb2_snd_usb_driver);

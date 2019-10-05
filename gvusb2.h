@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ OR BSD-3-Clause */
 #ifndef __GVUSB2_H__
 #define __GVUSB2_H__
 
@@ -11,10 +12,10 @@
 #define GVUSB2_PRODUCT_ID 0x0532
 
 #define gvusb2_dbg(dev, fmt, args...) \
-    dev_info(dev, fmt, ## args)
+	dev_info(dev, fmt, ## args)
 
 struct gvusb2_dev {
-    struct usb_device *udev;
+	struct usb_device *udev;
 };
 
 int gvusb2_read_reg(struct gvusb2_dev *dev, u16 reg, u8 *value);
