@@ -83,10 +83,6 @@ void gvusb2_snd_process_pcm(
 	struct snd_pcm_runtime *runtime = dev->substream->runtime;
 	int frames = bytes_to_frames(runtime, len);
 
-//    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_process_pcm()\n");
-//    gvusb2_dbg(&dev->intf->dev, "len %d\n", len);
-//    gvusb2_dbg(&dev->intf->dev, "avail %d\n", dev->avail);
-
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->hw_ptr += frames;
 	if (dev->hw_ptr >= runtime->buffer_size)
@@ -125,8 +121,6 @@ static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
-
 	ret = gvusb2_snd_submit_isoc(dev);
 	if (ret < 0)
 		return ret;
@@ -161,8 +155,6 @@ static int gvusb2_snd_hw_params(
 	unsigned int bytes;
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
-
 	bytes = params_buffer_bytes(hw_params);
 	if (substream->runtime->dma_bytes > 0)
 		vfree(substream->runtime->dma_area);
@@ -191,8 +183,6 @@ static int gvusb2_snd_pcm_prepare(struct snd_pcm_substream *substream)
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
-
 	return 0;
 }
 
@@ -200,8 +190,6 @@ static int gvusb2_snd_pcm_prepare(struct snd_pcm_substream *substream)
 static int gvusb2_snd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-
-	gvusb2_dbg(&dev->intf->dev, "%s(ss, %d)\n", __func__, cmd);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
@@ -223,7 +211,7 @@ static snd_pcm_uframes_t gvusb2_snd_pcm_pointer(
 	struct snd_pcm_substream *substream)
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-//    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_pcm_pointer(ss)\n");
+
 	return dev->hw_ptr;
 }
 
@@ -233,14 +221,13 @@ static struct page *gvusb2_snd_pcm_page(
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-	gvusb2_dbg(&dev->intf->dev, "%s(ss)\n", __func__);
-
 	return vmalloc_to_page(substream->runtime->dma_area + offset);
 }
 
 static int gvusb2_snd_dev_free(struct snd_device *device)
 {
 	/* deallocate all sound card device stuff */
+	/* TODO: do we need this? */
 
 	return 0;
 }
@@ -264,8 +251,6 @@ static const struct snd_pcm_ops gvusb2_snd_capture_ops = {
 int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 {
 	int ret;
-
-	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
 
 	spin_lock_init(&dev->lock);
 	dev->hw_ptr = dev->dma_offset = dev->avail = 0;
@@ -330,8 +315,6 @@ void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
 {
 	int i;
 
-	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
-
 	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
 		struct urb *urb = dev->urbs[i];
 
@@ -348,7 +331,6 @@ void gvusb2_snd_process_isoc(struct gvusb2_snd *dev, struct urb *urb)
 {
 	int i;
 	unsigned char *buf_iter;
-//    gvusb2_dbg(&dev->intf->dev, "gvusb2_snd_process_isoc(dev)\n");
 
 	if (dev->substream == NULL) {
 		gvusb2_dbg(&dev->intf->dev, "substream is null, skipping processing\n");
@@ -372,8 +354,6 @@ static void gvusb2_snd_isoc_irq(struct urb *urb)
 {
 	int i, ret;
 	struct gvusb2_snd *dev = urb->context;
-
-	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
 
 	switch (urb->status) {
 	case 0:
@@ -404,7 +384,6 @@ static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev)
 {
 	int i, ret;
 
-	gvusb2_dbg(&dev->intf->dev, "%s(dev)\n", __func__);
 	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
 		ret = usb_submit_urb(dev->urbs[i], GFP_KERNEL);
 		if (ret < 0)
@@ -473,8 +452,6 @@ int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	struct gvusb2_snd *dev;
 	int i, ret;
 	struct usb_endpoint_descriptor *audio_ep = NULL;
-
-	gvusb2_dbg(&intf->dev, "%s(intf, id)\n", __func__);
 
 	udev = interface_to_usbdev(intf);
 
@@ -562,8 +539,6 @@ free_dev:
 void gvusb2_snd_disconnect(struct usb_interface *intf)
 {
 	struct gvusb2_snd *dev;
-
-	gvusb2_dbg(&intf->dev, "%s(intf)\n", __func__);
 
 	/* remove our data from the interface */
 	dev = usb_get_intfdata(intf);

@@ -393,8 +393,6 @@ static void gvusb2_vid_check_altsetting(struct usb_interface *intf, int i,
 
 int gvusb2_vid_free(struct gvusb2_vid *dev)
 {
-	gvusb2_dbg(&dev->intf->dev, "%s(%p)\n", __func__, dev);
-
 	/* free urbs */
 	gvusb2_vid_free_urbs(dev);
 
@@ -411,8 +409,6 @@ void gvusb2_release(struct v4l2_device *v4l2_dev)
 {
 	struct gvusb2_vid *dev =
 		container_of(v4l2_dev, struct gvusb2_vid, v4l2_dev);
-
-	gvusb2_dbg(&dev->intf->dev, "releasing gvusb2\n");
 
 	gvusb2_i2c_unregister(dev);
 
@@ -431,8 +427,6 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	struct gvusb2_vid *dev;
 	int i, ret;
 	struct usb_endpoint_descriptor *video_ep = NULL;
-
-	gvusb2_dbg(&intf->dev, "%s(intf, id)\n", __func__);
 
 	udev = interface_to_usbdev(intf);
 
@@ -512,8 +506,6 @@ free_dev:
 void gvusb2_vid_disconnect(struct usb_interface *intf)
 {
 	struct gvusb2_vid *dev;
-
-	gvusb2_dbg(&intf->dev, "%s(intf)\n", __func__);
 
 	/* remove our data from the interface */
 	dev = usb_get_intfdata(intf);

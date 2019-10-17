@@ -75,8 +75,6 @@ static int gvusb2_vb2_queue_setup(struct vb2_queue *vb2q,
 	int width, height;
 	unsigned long size;
 
-	gvusb2_dbg(&dev->intf->dev, "%s(%d)\n", __func__, *nplanes);
-
 	/* Size in bytes of a single frame */
 	/* 2 pixels is 4 bytes */
 	get_resolution(dev, &width, &height);
@@ -109,8 +107,6 @@ static void gvusb2_vb2_buf_queue(struct vb2_buffer *vb)
 	struct gvusb2_vb *gvusb2_vbuf =
 		container_of(vbuf, struct gvusb2_vb, vb);
 
-//    gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
-
 	spin_lock_irqsave(&dev->buf_list_lock, flags);
 
 	gvusb2_vbuf->buf_pos = 0;
@@ -126,8 +122,6 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 	int ret;
 	struct gvusb2_vid *dev = vb2_get_drv_priv(vb2q);
 	s32 reg_07;
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	/* start mutex */
 	if (mutex_lock_interruptible(&dev->v4l2_lock))
@@ -276,8 +270,6 @@ static int gvusb2_vidioc_querycap(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
-
 	strscpy(cap->driver, "gvusb2", sizeof(cap->driver));
 	strscpy(cap->card, "gvusb2", sizeof(cap->card));
 	usb_make_path(dev->gv.udev, cap->bus_info, sizeof(cap->bus_info));
@@ -289,8 +281,6 @@ static int gvusb2_vidioc_enum_input(struct file *file, void *priv,
 	struct v4l2_input *i)
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	switch (i->index) {
 	case GVUSB2_INPUT_COMPOSITE:
@@ -314,8 +304,6 @@ static int gvusb2_vidioc_g_input(struct file *file, void *priv, unsigned int *i)
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
-
 	*i = dev->input_num;
 
 	return 0;
@@ -326,8 +314,6 @@ static int gvusb2_vidioc_s_input(struct file *file, void *priv, unsigned int i)
 	struct gvusb2_vid *dev = video_drvdata(file);
 	u8 val;
 	s32 reg;
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	switch (i) {
 	case GVUSB2_INPUT_COMPOSITE:
@@ -360,8 +346,6 @@ static int gvusb2_vidioc_querystd(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
-
 	/* we can't querystd with the current tw9910 driver */
 	*std = dev->vdev.tvnorms;
 
@@ -373,8 +357,6 @@ static int gvusb2_vidioc_g_std(struct file *file, void *priv, v4l2_std_id *std)
 	struct gvusb2_vid *dev = video_drvdata(file);
 	struct vb2_queue *vb2q = &dev->vb2q;
 
-	gvusb2_dbg(&dev->intf->dev, "%s() => %lld\n", __func__, dev->standard);
-
 	*std = dev->standard;
 
 	return 0;
@@ -385,13 +367,10 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 	struct gvusb2_vid *dev = video_drvdata(file);
 	struct vb2_queue *vb2q = &dev->vb2q;
 
-	gvusb2_dbg(&dev->intf->dev, "%s(%lld)\n", __func__, std);
-
 	if (std == dev->standard)
 		return 0;
 
 	if (vb2_is_busy(vb2q)) {
-		gvusb2_dbg(&dev->intf->dev, "can't set std. busy.\n");
 		return -EBUSY;
 	}
 
@@ -407,8 +386,6 @@ static int gvusb2_vidioc_enum_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
-
 	if (f->index != 0)
 		return -EINVAL;
 
@@ -422,8 +399,6 @@ static int gvusb2_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 	int width, height;
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	get_resolution(dev, &width, &height);
 	f->fmt.pix.width = width;
@@ -443,8 +418,6 @@ static int gvusb2_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	struct gvusb2_vid *dev = video_drvdata(file);
 	struct vb2_queue *vb2q = &dev->vb2q;
 	int width, height;
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	if (vb2_is_busy(vb2q))
 		return -EBUSY;
@@ -466,8 +439,6 @@ static int gvusb2_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 	int width, height;
-
-	gvusb2_dbg(&dev->intf->dev, "%s()\n", __func__);
 
 	get_resolution(dev, &width, &height);
 	f->fmt.pix.width = width;
