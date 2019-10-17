@@ -133,7 +133,6 @@ void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
 		/* get a new buffer */
 		dev->current_buf = gvusb2_vid_next_buffer(dev);
 		if (dev->current_buf == NULL) {
-			gvusb2_dbg(&dev->intf->dev, "null buffer\n");
 			return;
 		}
 	}
