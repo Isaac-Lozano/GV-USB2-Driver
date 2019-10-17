@@ -164,7 +164,6 @@ static int gvusb2_snd_hw_params(
 	struct snd_pcm_hw_params *hw_params)
 {
 	unsigned int bytes;
-	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
 	bytes = params_buffer_bytes(hw_params);
 	if (substream->runtime->dma_bytes > 0)
@@ -192,8 +191,7 @@ static int gvusb2_snd_hw_free(struct snd_pcm_substream *substream)
 
 static int gvusb2_snd_pcm_prepare(struct snd_pcm_substream *substream)
 {
-	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-
+	/* TODO: Do we need this? */
 	return 0;
 }
 
@@ -230,8 +228,6 @@ static struct page *gvusb2_snd_pcm_page(
 	struct snd_pcm_substream *substream,
 	unsigned long offset)
 {
-	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
-
 	return vmalloc_to_page(substream->runtime->dma_area + offset);
 }
 

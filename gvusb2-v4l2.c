@@ -174,7 +174,7 @@ static void gvusb2_vb2_stop_streaming(struct vb2_queue *vb2q)
 
 	/* start mutex */
 	if (mutex_lock_interruptible(&dev->v4l2_lock))
-		return -ERESTARTSYS;
+		return;
 
 	/* cancel urbs */
 	gvusb2_vid_cancel_urbs(dev);
@@ -366,7 +366,6 @@ static int gvusb2_vidioc_querystd(struct file *file, void *priv,
 static int gvusb2_vidioc_g_std(struct file *file, void *priv, v4l2_std_id *std)
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
-	struct vb2_queue *vb2q = &dev->vb2q;
 
 	*std = dev->standard;
 
@@ -395,8 +394,6 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 static int gvusb2_vidioc_enum_fmt_vid_cap(struct file *file, void *priv,
 	struct v4l2_fmtdesc *f)
 {
-	struct gvusb2_vid *dev = video_drvdata(file);
-
 	if (f->index != 0)
 		return -EINVAL;
 
