@@ -625,7 +625,7 @@ int gvusb2_video_register(struct gvusb2_vid *dev)
 		dev->standard);
 
 	video_set_drvdata(&dev->vdev, dev);
-	ret = video_register_device(&dev->vdev, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&dev->vdev, VFL_TYPE_VIDEO, -1);
 	if (ret < 0)
 		return ret;
 
