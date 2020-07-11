@@ -95,27 +95,12 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 }
 
 static inline
-void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
+void gvusb2_vid_process_status_packet(struct gvusb2_vid *dev, u8 status_byte)
 {
 	struct gvusb2_vb *vb = dev->current_buf;
 
-	if (len < 4) {
-		gvusb2_dbg(&dev->intf->dev, "video packet too small\n");
-		return;
-	}
-
-	if ((buf[0] & 0x80) == 0) {
-		if (dev->counter != buf[1])
-			gvusb2_dbg(&dev->intf->dev,
-				"counter desync. expected %d got %d\n",
-				dev->counter, buf[1]);
-
-		dev->counter = (buf[1] + 1) % 64;
-	} else {
-		dev->counter = (dev->counter + 1) % 64;
-	}
-
-	if (buf[0] == 0xc0) {
+	if (status_byte & 0x40) {
+		/* second field */
 		if (dev->current_buf != NULL) {
 			/* submit buffer */
 			/* TODO: Do we set this even if it's too small? */
@@ -132,26 +117,42 @@ void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
 
 		/* get a new buffer */
 		dev->current_buf = gvusb2_vid_next_buffer(dev);
-		if (dev->current_buf == NULL)
-			return;
-	}
+	} else if (dev->current_buf != NULL) {
+		/* first field */
+		int width;
 
-	if (dev->current_buf == NULL)
+		get_resolution(dev, &width, 0);
+		dev->current_buf->buf_pos = width * 2;
+		dev->current_buf->line_pos = 0;
+	}
+}
+
+static inline
+void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
+{
+	if (len < 4) {
+		gvusb2_dbg(&dev->intf->dev, "video packet too small\n");
 		return;
-
-	if ((buf[0] & 0x80) != 0) {
-		if ((buf[0] & 0x40) == 0) {
-			int width;
-
-			get_resolution(dev, &width, 0);
-			dev->current_buf->buf_pos = width * 2;
-			dev->current_buf->line_pos = 0;
-		}
-		if (buf[0] == 0xc0 || buf[0] == 0x80)
-			return;
 	}
 
-	gvusb2_vid_copy_video(dev, buf + 4, len - 4);
+	if (buf[0] & 0x80) {
+		/* Status packet */
+		dev->counter = (dev->counter + 1) % 64;
+
+		gvusb2_vid_process_status_packet(dev, buf[0]);
+	} else {
+		/* Data packet */
+		if (dev->counter != buf[1])
+			gvusb2_dbg(&dev->intf->dev,
+				"counter desync. expected %d got %d\n",
+				dev->counter, buf[1]);
+
+		dev->counter = (buf[1] + 1) % 64;
+
+		if (dev->current_buf != NULL)
+			gvusb2_vid_copy_video(dev, buf + 4, len - 4);
+	}
+
 }
 
 static inline
