@@ -263,6 +263,18 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 		i2c_smbus_write_byte_data(&dev->i2c_client, 0x12,
 			(ctrl->val & 0x0f) | 0x50);
 		break;
+	case GVUSB2_CID_VERTICAL_START:
+		gvusb2_write_reg(&dev->gv, 0x0112, ctrl->val);
+		gvusb2_write_reg(&dev->gv, 0x0113, 0);
+		gvusb2_write_reg(&dev->gv, 0x0116, ctrl->val + 0xf0);
+		gvusb2_write_reg(&dev->gv, 0x0117, 0);
+		break;
+	case GVUSB2_CID_HORIZONTAL_START:
+		gvusb2_write_reg(&dev->gv, 0x0110, ctrl->val);
+		gvusb2_write_reg(&dev->gv, 0x0111, 0);
+		gvusb2_write_reg(&dev->gv, 0x0114, ctrl->val + 0xa0);
+		gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
+		break;
 	}
 
 	return 0;
@@ -270,6 +282,30 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 
 static const struct v4l2_ctrl_ops gvusb2_ctrl_ops = {
 	.s_ctrl = gvusb2_s_ctrl,
+};
+
+static const struct v4l2_ctrl_config gvusb2_ctrl_vertical = {
+	.ops = &gvusb2_ctrl_ops,
+	.id = GVUSB2_CID_VERTICAL_START,
+	.name = "Vertical Start",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.flags = V4L2_CTRL_FLAG_SLIDER,
+	.min = 1,
+	.max = 4,
+	.step = 1,
+	.def = 2,
+};
+
+static const struct v4l2_ctrl_config gvusb2_ctrl_horizontal = {
+	.ops = &gvusb2_ctrl_ops,
+	.id = GVUSB2_CID_HORIZONTAL_START,
+	.name = "Horizontal Start",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.flags = V4L2_CTRL_FLAG_SLIDER,
+	.min = 0,
+	.max = 8,
+	.step = 4,
+	.def = 4,
 };
 
 /*****************************************************************************
@@ -397,7 +433,7 @@ static int gvusb2_vidioc_enum_fmt_vid_cap(struct file *file, void *priv,
 	if (f->index != 0)
 		return -EINVAL;
 
-	f->pixelformat = V4L2_PIX_FMT_YUYV;
+	f->pixelformat = V4L2_PIX_FMT_UYVY;
 
 	return 0;
 }
@@ -412,7 +448,7 @@ static int gvusb2_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.width = width;
 	f->fmt.pix.height = height;
 	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
-	f->fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 	f->fmt.pix.bytesperline = width * 2;
 	f->fmt.pix.sizeimage = height * width * 2;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
@@ -434,7 +470,7 @@ static int gvusb2_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.width = width;
 	f->fmt.pix.height = height;
 	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
-	f->fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 	f->fmt.pix.bytesperline = width * 2;
 	f->fmt.pix.sizeimage = height * width * 2;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
@@ -452,7 +488,7 @@ static int gvusb2_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.width = width;
 	f->fmt.pix.height = height;
 	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
-	f->fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 	f->fmt.pix.bytesperline = width * 2;
 	f->fmt.pix.sizeimage = height * width * 2;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
@@ -546,6 +582,8 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 		V4L2_CID_HUE, 0, 255, 1, 128);
 	v4l2_ctrl_new_std(&dev->ctrl_handler, &gvusb2_ctrl_ops,
 		V4L2_CID_SHARPNESS, 0, 15, 1, 0);
+	v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_vertical, NULL);
+	v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_horizontal, NULL);
 
 	if (dev->ctrl_handler.error) {
 		ret = dev->ctrl_handler.error;

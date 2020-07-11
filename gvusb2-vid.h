@@ -25,6 +25,10 @@
 #define GVUSB2_INPUT_SVIDEO    1
 #define GVUSB2_INPUT_MAX_VAL   1
 
+#define GVUSB2_CID_BASE			(V4L2_CID_USER_BASE | 0xf000)
+#define GVUSB2_CID_VERTICAL_START	(GVUSB2_CID_BASE + 0)
+#define GVUSB2_CID_HORIZONTAL_START	(GVUSB2_CID_BASE + 1)
+
 struct gvusb2_vb {
 	struct vb2_v4l2_buffer vb;
 	struct list_head list;
