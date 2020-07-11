@@ -380,9 +380,8 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 	if (std == dev->standard)
 		return 0;
 
-	if (vb2_is_busy(vb2q)) {
+	if (vb2_is_busy(vb2q))
 		return -EBUSY;
-	}
 
 	/* TODO: set standard based off of this */
 	dev->standard = std;
