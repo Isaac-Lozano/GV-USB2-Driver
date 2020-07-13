@@ -108,6 +108,8 @@ static inline void gvusb2_vid_submit_video_buffer(struct gvusb2_vid *dev)
 	vb->vb.vb2_buf.timestamp = ktime_get_ns();
 	vb2_buffer_done(&vb->vb.vb2_buf, VB2_BUF_STATE_DONE);
 
+	dev->current_buf = NULL;
+
 	/* get a new buffer */
 	dev->current_buf = gvusb2_vid_next_buffer(dev);
 }
