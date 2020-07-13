@@ -34,6 +34,7 @@ struct gvusb2_vb {
 	struct list_head list;
 	int buf_pos;
 	int line_pos;
+	int field;
 };
 
 struct gvusb2_vid {
