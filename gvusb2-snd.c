@@ -315,8 +315,12 @@ void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev)
 {
 	int i;
 
-	for (i = 0; i < GVUSB2_NUM_URBS; i++)
-		usb_kill_urb(dev->urbs[i]);
+	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
+		struct urb *urb = dev->urbs[i];
+
+		if (urb != NULL)
+			usb_kill_urb(dev->urbs[i]);
+	}
 }
 
 void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
@@ -551,6 +555,9 @@ void gvusb2_snd_disconnect(struct usb_interface *intf)
 	/* remove our data from the interface */
 	dev = usb_get_intfdata(intf);
 	usb_set_intfdata(intf, NULL);
+
+	/* free isoc urbs */
+	gvusb2_snd_free_isoc(dev);
 
 	/* free the sound card */
 	gvusb2_snd_alsa_free(dev);
