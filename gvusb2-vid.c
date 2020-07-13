@@ -94,36 +94,48 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 	}
 }
 
-static inline
-void gvusb2_vid_process_status_packet(struct gvusb2_vid *dev, u8 status_byte)
+static inline void gvusb2_vid_submit_video_buffer(struct gvusb2_vid *dev)
 {
 	struct gvusb2_vb *vb = dev->current_buf;
 
-	if (status_byte & 0x40) {
-		/* second field */
-		if (dev->current_buf != NULL) {
-			/* submit buffer */
-			/* TODO: Do we set this even if it's too small? */
-			vb2_set_plane_payload(&vb->vb.vb2_buf, 0,
-				vb->vb.vb2_buf.planes[0].length);
+	/* submit buffer */
+	/* TODO: Do we set this even if it's too small? */
+	vb2_set_plane_payload(&vb->vb.vb2_buf, 0,
+		vb->vb.vb2_buf.planes[0].length);
 
-			vb->vb.sequence = dev->sequence++;
-			vb->vb.field = V4L2_FIELD_INTERLACED;
-			vb->vb.vb2_buf.timestamp = ktime_get_ns();
-			vb2_buffer_done(&vb->vb.vb2_buf, VB2_BUF_STATE_DONE);
+	vb->vb.sequence = dev->sequence++;
+	vb->vb.field = V4L2_FIELD_INTERLACED;
+	vb->vb.vb2_buf.timestamp = ktime_get_ns();
+	vb2_buffer_done(&vb->vb.vb2_buf, VB2_BUF_STATE_DONE);
 
-			dev->current_buf = NULL;
-		}
+	/* get a new buffer */
+	dev->current_buf = gvusb2_vid_next_buffer(dev);
+}
 
-		/* get a new buffer */
+static inline
+void gvusb2_vid_process_status_packet(struct gvusb2_vid *dev, u8 status_byte)
+{
+	if (dev->current_buf == NULL) {
 		dev->current_buf = gvusb2_vid_next_buffer(dev);
-	} else if (dev->current_buf != NULL) {
-		/* first field */
+		return;
+	}
+
+	if (status_byte & 0x40) {
+		/* odd field */
+		gvusb2_vid_submit_video_buffer(dev);
+	} else {
+		/* even field */
 		int width;
 
 		get_resolution(dev, &width, 0);
 		dev->current_buf->buf_pos = width * 2;
 		dev->current_buf->line_pos = 0;
+
+		if (dev->current_buf->field == 1) {
+			gvusb2_vid_submit_video_buffer(dev);
+		} else {
+			dev->current_buf->field = 1;
+		}
 	}
 }
 
