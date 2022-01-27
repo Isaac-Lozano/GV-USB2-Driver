@@ -16,6 +16,7 @@
 #include <linux/vmalloc.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
+#include <sound/initval.h>
 
 #include "gvusb2.h"
 
@@ -25,16 +26,10 @@ MODULE_DESCRIPTION("gvusb2 sound driver");
 MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
-int index;
-char *id;
-bool enable;
+static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
+static char *ids[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
+static bool enabled[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
-module_param(index, int, 0444);
-MODULE_PARM_DESC(index, "Index value for " CARD_NAME " soundcard.");
-module_param(id, charp, 0444);
-MODULE_PARM_DESC(id, "ID string for " CARD_NAME " soundcard.");
-module_param(enable, bool, 0444);
-MODULE_PARM_DESC(enable, "Enable " CARD_NAME " soundcard.");
 
 static const struct usb_device_id gvusb2_id_table[] = {
 	{ USB_DEVICE(GVUSB2_VENDOR_ID, GVUSB2_PRODUCT_ID) },
@@ -259,11 +254,20 @@ static const struct snd_pcm_ops gvusb2_snd_capture_ops = {
 int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 {
 	int ret;
+	int crdIdx;
+
+	if(crdIdx >= SNDRV_CARDS)
+		return -ENODEV;
+		
+	if(!enabled[crdIdx]) {
+		crdIdx++;
+		return -ENOENT;
+	}
 
 	spin_lock_init(&dev->lock);
 	dev->hw_ptr = dev->dma_offset = dev->avail = 0;
 
-	ret = snd_card_new(&dev->intf->dev, index, id, THIS_MODULE, 0,
+	ret = snd_card_new(&dev->intf->dev, index[crdIdx], ids[crdIdx], THIS_MODULE, 0,
 			&dev->card);
 	if (ret < 0)
 		return ret;
@@ -302,7 +306,7 @@ int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 
 static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
 {
-	snd_card_free_when_closed(dev->card);
+	snd_card_free(dev->card);
 	dev->card = NULL;
 }
 
