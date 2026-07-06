@@ -200,8 +200,6 @@ static const struct vb2_ops gvusb2_vb2_ops = {
 	.buf_queue       = gvusb2_vb2_buf_queue,
 	.start_streaming = gvusb2_vb2_start_streaming,
 	.stop_streaming  = gvusb2_vb2_stop_streaming,
-	.wait_prepare    = vb2_ops_wait_prepare,
-	.wait_finish     = vb2_ops_wait_finish,
 };
 
 int gvusb2_vb2_setup(struct gvusb2_vid *dev)
