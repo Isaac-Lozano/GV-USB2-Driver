@@ -72,7 +72,8 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 			len_to_copy = bytes_left_in_line;
 
 		if (vb->buf_pos + len_to_copy > buffer_len) {
-			dev_warn(&dev->intf->dev,
+			/* fires on every packet while there's no video signal */
+			dev_warn_ratelimited(&dev->intf->dev,
 				"buffer overflow detected.\n");
 
 			/* this seems to break it somehow? */
@@ -434,10 +435,8 @@ void gvusb2_release(struct v4l2_device *v4l2_dev)
 	struct gvusb2_vid *dev =
 		container_of(v4l2_dev, struct gvusb2_vid, v4l2_dev);
 
-	gvusb2_i2c_unregister(dev);
-
+	/* subdevs and the i2c adapter were already torn down in disconnect */
 	v4l2_ctrl_handler_free(&dev->ctrl_handler);
-	v4l2_device_unregister(&dev->v4l2_dev);
 
 	mutex_destroy(&dev->v4l2_lock);
 	mutex_destroy(&dev->vb2q_lock);
@@ -547,12 +546,19 @@ void gvusb2_vid_disconnect(struct usb_interface *intf)
 
 	/* clean up v4l2 */
 	video_unregister_device(&dev->vdev);
-	v4l2_device_disconnect(&dev->v4l2_dev);
-
-	/* make udev NULL? */
 
 	mutex_unlock(&dev->v4l2_lock);
 	mutex_unlock(&dev->vb2q_lock);
+
+	/*
+	 * Unregister the tw9910 subdev (and its i2c client) before deleting
+	 * the i2c adapter. Deleting the adapter first removes the client out
+	 * from under the subdev, and v4l2_device_unregister() then oopses
+	 * trying to unregister it again. Do both here rather than in release
+	 * so they go away while the usb interface (their parent) still exists.
+	 */
+	v4l2_device_unregister(&dev->v4l2_dev);
+	gvusb2_i2c_unregister(dev);
 
 	/* decrease v4l2 refcount */
 	v4l2_device_put(&dev->v4l2_dev);

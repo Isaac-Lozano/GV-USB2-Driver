@@ -16,6 +16,7 @@
 #include <linux/vmalloc.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
+#include <sound/initval.h>
 
 #include "gvusb2.h"
 
@@ -25,9 +26,10 @@ MODULE_DESCRIPTION("gvusb2 sound driver");
 MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
-int index;
-char *id;
-bool enable;
+/* default to the first free card slot rather than forcing slot 0 */
+static int index = SNDRV_DEFAULT_IDX1;
+static char *id = SNDRV_DEFAULT_STR1;
+static bool enable = true;
 
 module_param(index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for " CARD_NAME " soundcard.");
@@ -306,6 +308,18 @@ static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
 	dev->card = NULL;
 }
 
+/* called by alsa once the card is freed and every pcm file is closed */
+static void gvusb2_snd_card_private_free(struct snd_card *card)
+{
+	struct gvusb2_snd *dev = card->private_data;
+
+	/* free the internal gvusb2 device */
+	gvusb2_free(&dev->gv);
+
+	/* free me */
+	kfree(dev);
+}
+
 /*****************************************************************************
  * USB Stuff
  ****************************************************************************/
@@ -531,6 +545,10 @@ int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	if (ret < 0)
 		goto free_alsa;
 
+	/* from here on, the card owns dev and frees it in private_free */
+	dev->card->private_data = dev;
+	dev->card->private_free = gvusb2_snd_card_private_free;
+
 	/* attach our data to the interface */
 	usb_set_intfdata(intf, dev);
 
@@ -556,17 +574,22 @@ void gvusb2_snd_disconnect(struct usb_interface *intf)
 	dev = usb_get_intfdata(intf);
 	usb_set_intfdata(intf, NULL);
 
-	/* free isoc urbs */
+	/*
+	 * Stop any running stream and refuse new opens. This does not wait
+	 * for userspace (e.g. pipewire) to close the card, which matters
+	 * because during system suspend userspace is already frozen.
+	 */
+	snd_card_disconnect(dev->card);
+
+	/* kill in-flight urbs before freeing them */
+	gvusb2_snd_cancel_isoc(dev);
 	gvusb2_snd_free_isoc(dev);
 
-	/* free the sound card */
+	/*
+	 * Free the sound card once the last pcm file is closed. pcm ops still
+	 * use dev until then, so dev itself is freed in the card's private_free.
+	 */
 	gvusb2_snd_alsa_free(dev);
-
-	/* free the internal gvusb2 device */
-	gvusb2_free(&dev->gv);
-
-	/* free me */
-	kfree(dev);
 }
 
 static struct usb_driver gvusb2_snd_usb_driver = {
