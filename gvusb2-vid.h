@@ -28,6 +28,10 @@
 #define GVUSB2_CID_BASE			(V4L2_CID_USER_BASE | 0xf000)
 #define GVUSB2_CID_VERTICAL_START	(GVUSB2_CID_BASE + 0)
 #define GVUSB2_CID_HORIZONTAL_START	(GVUSB2_CID_BASE + 1)
+#define GVUSB2_CID_STANDARD (GVUSB2_CID_BASE + 2)
+
+#define GVUSB2_MAX_VOFFSET 4
+#define GVUSB2_MAX_HOFFSET 8
 
 struct gvusb2_vb {
 	struct vb2_v4l2_buffer vb;
@@ -68,6 +72,8 @@ struct gvusb2_vid {
 	struct list_head buf_list;
 	spinlock_t buf_list_lock;
 	struct gvusb2_vb *current_buf;
+
+    u16 vstart; //sebi
 };
 
 /* provided by gvusb2-vid.c */

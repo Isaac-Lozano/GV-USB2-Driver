@@ -62,6 +62,10 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 	get_resolution(dev, &width, 0);
 	bytes_per_line = width * 2;
 
+//    gvusb2_dbg(&dev->intf->dev, "in len: %d width: %d\n", len, width);
+//    gvusb2_dbg(&dev->intf->dev, "planes[0].len: %d(%d) lpos:%d bpos:%d\n", buffer_len, buffer_len/width, vb->line_pos, vb->buf_pos);
+//    gvusb2_dbg(&dev->intf->dev, "dst len: %d src len: %d\n", buffer_len - vb->line_pos - vb->buf_pos, len);
+
 	while (len > 0) {
 		int bytes_left_in_line = bytes_per_line - vb->line_pos;
 		int len_to_copy;
@@ -148,6 +152,24 @@ void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
 		gvusb2_dbg(&dev->intf->dev, "video packet too small\n");
 		return;
 	}
+#if DEBUG_DRIVER
+    //dev_info_ratelimited(&dev->intf->dev, "pkt len=%d b0=%02x b1=%02x\n",
+	//	     len, buf[0], buf[1]);
+
+    static unsigned long n_empty, n_data, n_status;
+
+    if (buf[0] & 0x80)
+        n_status++;
+    else if (len > 4)
+        n_data++;
+    else
+        n_empty++;
+
+    if (((n_empty + n_data + n_status) % 8000) == 0) {
+        dev_info(&dev->intf->dev, "pkts: empty=%lu data=%lu status=%lu\n",
+                n_empty, n_data, n_status);
+    }
+#endif 
 
 	if (buf[0] & 0x80) {
 		/* Status packet */

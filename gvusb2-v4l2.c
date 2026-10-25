@@ -23,6 +23,28 @@
 
 #include "gvusb2-vid.h"
 
+#define DEBUG_DRIVER 0
+
+static char *standard = "ntsc";
+module_param(standard, charp, 0444);
+MODULE_PARM_DESC(standard, "Default video standard: ntsc or pal (default: ntsc)");
+
+static v4l2_std_id gvusb2_parse_standard(const char *s)
+{
+    v4l2_std_id std;
+	if (s && (!strcasecmp(s, "pal") || !strcasecmp(s, "pal-b")))
+		std = V4L2_STD_PAL_B;
+
+	if (!s || (strcasecmp(s, "ntsc") && strcasecmp(s, "ntsc-m"))) {
+		pr_warn("gvusb2: unknown standard \"%s\", using NTSC\n",
+			s ? s : "(null)");
+        std = V4L2_STD_NTSC_M;
+    }
+
+    pr_warn("standard = %s\n", std == V4L2_STD_PAL_B ? "PAL" : "NTSC");
+    return std;
+}
+
 /*****************************************************************************
  * Helper functions
  ****************************************************************************/
@@ -34,21 +56,10 @@ struct i2c_regval {
 
 void get_resolution(struct gvusb2_vid *dev, int *width, int *height)
 {
-	switch (dev->standard) {
-	default:
-	case V4L2_STD_NTSC_M:
-		if (width != NULL)
-			*width = 720;
-		if (height != NULL)
-			*height = 480;
-		break;
-	case V4L2_STD_PAL_B:
-		if (width != NULL)
-			*width = 720;
-		if (height != NULL)
-			*height = 576;
-		break;
-	}
+    if(width)
+        *width = 720;
+    if(height)
+        *height = (dev->standard & V4L2_STD_625_50) ? 576 : 480;
 }
 
 void gvusb2_vid_clear_queue(struct gvusb2_vid *dev)
@@ -128,12 +139,86 @@ static void gvusb2_vb2_buf_queue(struct vb2_buffer *vb)
 	spin_unlock_irqrestore(&dev->buf_list_lock, flags);
 }
 
+static void gvusb2_set_tw9910_crop(struct gvusb2_vid *dev) {
+    // according to TW9910 Datasheet table on page 10
+    u16 vdelay, vact;
+
+    // !NB: max active line number should be more or equal than amount 
+    // of lines that usb bridge (STK1150) expects otherwise it will stall, 
+    // therefore MAX_V/H OFFSET is added
+
+    if (dev->standard & V4L2_STD_625_50) {
+        // vdelay + vactive <=  312 see p. 8 of TW9910 datasheet
+        vdelay = 22;
+        vact   = 288 + GVUSB2_MAX_VOFFSET;
+    } else {
+        // vdelay + vactive <=  262 see p. 8 of TW9910 datasheet
+        vdelay = 18; // 0x12
+        vact   = 244 + GVUSB2_MAX_VOFFSET;// 0xf4
+    }
+
+    gvusb2_dbg(&dev->intf->dev, "vdelay:%d vact:%d\n", vdelay, vact);
+
+    const u16 hdelay = 0x012; // 18
+    // div by 2 because usb one pixel stride is 2bytes
+    const u16 hact   = 0x2d0 + GVUSB2_MAX_HOFFSET/2; // 720 + ...
+                              //
+    u8 crop_hi = (((vdelay >> 8) & 0b11) << 6) |   /* VDELAY_HI  [7:6] */
+                 (((vact   >> 8) & 0b11) << 4) |   /* VACTIVE_HI [5:4] */
+                 (((hdelay >> 8) & 0b11) << 2) |   /* HDELAY_HI  [3:2] */
+                  ((hact   >> 8) & 0b11);          /* HACTIVE_HI [1:0] */
+
+	i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, crop_hi);
+	i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, vdelay&0xff); // VDELAY_LO = 19
+	i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, vact&0xff); // VACTIVE_LO = 240 + 4
+	i2c_smbus_write_byte_data(&dev->i2c_client, 0x0a, hdelay&0xff); // HDELAY_LO = 18
+	i2c_smbus_write_byte_data(&dev->i2c_client, 0x0b, hact&0xff); // HACTIVE_LO  = 210
+}
+
+//sebi:
+static void gvusb2_set_vert_window(struct gvusb2_vid *dev)
+{
+    // 240 and not not 244 because for some reason I see buffer owerflow when receiving data
+    // prob. because NTSC res is 720x480 even though recommended value is 0xf4 fro TW9910 
+    // (see. Table 4. ITU-R BT.656 Register set up from TW9910 datasheet)
+
+	u16 lines = (dev->standard & V4L2_STD_625_50) ? 288 : 240;
+	u16 y0 = dev->vstart;
+	u16 y1 = y0 + lines;
+
+    gvusb2_dbg(&dev->intf->dev, "usb bridge voffset:%d lines:%d\n", 
+            dev->vstart, lines);
+
+	gvusb2_write_reg(&dev->gv, 0x0112, y0 & 0xff);
+	gvusb2_write_reg(&dev->gv, 0x0113, y0 >> 8);
+	gvusb2_write_reg(&dev->gv, 0x0116, y1 & 0xff);
+	gvusb2_write_reg(&dev->gv, 0x0117, y1 >> 8);
+}
+
+#if DEBUG_DRIVER
+static void dump_reg_state(struct gvusb2_vid *dev)
+{
+	u8 v;
+	int r;
+
+	msleep(300);   /* let the decoder lock */
+	for (r = 0x0110; r <= 0x0117; r++) {
+		gvusb2_read_reg(&dev->gv, r, &v);
+		dev_info(&dev->intf->dev, "stk1150[%04x]=%02x\n", r, v);
+	}
+	for (r = 0x01; r <= 0x0b; r++)
+		dev_info(&dev->intf->dev, "tw9910[%02x]=%02x\n", r,
+			 i2c_smbus_read_byte_data(&dev->i2c_client, r));
+	dev_info(&dev->intf->dev, "tw9910[1c]=%02x\n",
+		 i2c_smbus_read_byte_data(&dev->i2c_client, 0x1c));
+}
+#endif
+
 static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 					unsigned int count)
 {
 	int ret;
 	struct gvusb2_vid *dev = vb2_get_drv_priv(vb2q);
-	s32 reg_07;
 
 	/* start mutex */
 	if (mutex_lock_interruptible(&dev->v4l2_lock))
@@ -142,13 +227,8 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 	/* set seq to 0 */
 	dev->sequence = 0;
 
-	/* set cropping */
-	reg_07 = i2c_smbus_read_byte_data(&dev->i2c_client, 0x07);
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, reg_07 & 0x0f);
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x13);
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0xf4);
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x0a, 0x12);
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x0b, 0xd2);
+    gvusb2_set_tw9910_crop(dev);
+    gvusb2_set_vert_window(dev);
 
 	/* start tw9910 */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 1);
@@ -162,6 +242,10 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 	ret = gvusb2_vid_submit_urbs(dev);
 	if (ret < 0)
 		return ret;
+
+#if DEBUG_DRIVER
+    dump_reg_state(dev);
+#endif
 
 	/* stop mutex */
 	mutex_unlock(&dev->v4l2_lock);
@@ -200,8 +284,8 @@ static const struct vb2_ops gvusb2_vb2_ops = {
 	.buf_queue       = gvusb2_vb2_buf_queue,
 	.start_streaming = gvusb2_vb2_start_streaming,
 	.stop_streaming  = gvusb2_vb2_stop_streaming,
-	.wait_prepare    = vb2_ops_wait_prepare,
-	.wait_finish     = vb2_ops_wait_finish,
+	//.wait_prepare    = vb2_ops_wait_prepare,
+	//.wait_finish     = vb2_ops_wait_finish,
 };
 
 int gvusb2_vb2_setup(struct gvusb2_vid *dev)
@@ -265,10 +349,8 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 			(ctrl->val & 0x0f) | 0x50);
 		break;
 	case GVUSB2_CID_VERTICAL_START:
-		gvusb2_write_reg(&dev->gv, 0x0112, ctrl->val);
-		gvusb2_write_reg(&dev->gv, 0x0113, 0);
-		gvusb2_write_reg(&dev->gv, 0x0116, ctrl->val + 0xf0);
-		gvusb2_write_reg(&dev->gv, 0x0117, 0);
+        dev->vstart = ctrl->val;
+        gvusb2_set_vert_window(dev);
 		break;
 	case GVUSB2_CID_HORIZONTAL_START:
 		gvusb2_write_reg(&dev->gv, 0x0110, ctrl->val);
@@ -291,10 +373,10 @@ static const struct v4l2_ctrl_config gvusb2_ctrl_vertical = {
 	.name = "Vertical Start",
 	.type = V4L2_CTRL_TYPE_INTEGER,
 	.flags = V4L2_CTRL_FLAG_SLIDER,
-	.min = 1,
-	.max = 4,
+	.min = 0,
+	.max = GVUSB2_MAX_VOFFSET,
 	.step = 1,
-	.def = 2,
+	.def = 3,
 };
 
 static const struct v4l2_ctrl_config gvusb2_ctrl_horizontal = {
@@ -304,7 +386,7 @@ static const struct v4l2_ctrl_config gvusb2_ctrl_horizontal = {
 	.type = V4L2_CTRL_TYPE_INTEGER,
 	.flags = V4L2_CTRL_FLAG_SLIDER,
 	.min = 0,
-	.max = 8,
+	.max = GVUSB2_MAX_HOFFSET,
 	.step = 4,
 	.def = 4,
 };
@@ -332,10 +414,10 @@ static int gvusb2_vidioc_enum_input(struct file *file, void *priv,
 
 	switch (i->index) {
 	case GVUSB2_INPUT_COMPOSITE:
-		strncpy(i->name, "Composite", sizeof(i->name));
+		strscpy(i->name, "Composite", sizeof(i->name));
 		break;
 	case GVUSB2_INPUT_SVIDEO:
-		strncpy(i->name, "S-Video", sizeof(i->name));
+		strscpy(i->name, "S-Video", sizeof(i->name));
 		break;
 	default:
 		return -EINVAL;
@@ -422,7 +504,22 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 
 	/* TODO: set standard based off of this */
 	dev->standard = std;
+
+	struct v4l2_ctrl *vertical_start = v4l2_ctrl_find(&dev->ctrl_handler, GVUSB2_CID_VERTICAL_START);
+	struct v4l2_ctrl *horizontal_start = v4l2_ctrl_find(&dev->ctrl_handler, GVUSB2_CID_HORIZONTAL_START);
+
+	if (dev->standard & V4L2_STD_625_50) {
+		v4l2_ctrl_s_ctrl(vertical_start, 3);
+		v4l2_ctrl_s_ctrl(horizontal_start, 0);
+	} else {
+		v4l2_ctrl_s_ctrl(vertical_start, 2);
+		v4l2_ctrl_s_ctrl(horizontal_start, 0);
+	}
+
+
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_std, std);
+
+    gvusb2_set_vert_window(dev);
 
 	return 0;
 }
@@ -541,8 +638,8 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 
 	static const struct i2c_regval phase6[] = {
 			{0x06, 0x00},
-			{0x03, 0xa2},
-			{0x05, 0x01},
+			{0x03, 0xa2}, // ITU-R-656 
+			{0x05, 0x01}, // HS output pin control HSYNC
 			//{0x08, 0x12},
 			//{0x09, 0xf4},
 			{0x19, 0xde},
@@ -565,8 +662,10 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 
 	/* make our ctrl handler */
 	ret = v4l2_ctrl_handler_init(&dev->ctrl_handler, 5);
-	if (ret < 0)
+	if (ret < 0) {
+        dev_warn(&dev->intf->dev, "ctrl hanldle init error: %d\n", ret);
 		return ret;
+    }
 
 	dev->v4l2_dev.release = gvusb2_release;
 	dev->v4l2_dev.ctrl_handler = &dev->ctrl_handler;
@@ -587,6 +686,7 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 
 	if (dev->ctrl_handler.error) {
 		ret = dev->ctrl_handler.error;
+        dev_warn(&dev->intf->dev, "%d ctrl hanldle init error: %d\n", __LINE__, ret);
 		goto free_ctrl_handler;
 	}
 
@@ -594,8 +694,10 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 	v4l2_ctrl_handler_setup(&dev->ctrl_handler);
 
 	ret = v4l2_device_register(&dev->intf->dev, &dev->v4l2_dev);
-	if (ret < 0)
+	if (ret < 0) {
+        dev_warn(&dev->intf->dev, "%d dev register error: %d\n", __LINE__, ret);
 		goto free_ctrl_handler;
+    }
 
 	/* load tw9910 driver */
 	dev->sd_tw9910 = v4l2_i2c_new_subdev_board(&dev->v4l2_dev, &dev->adap,
@@ -656,7 +758,7 @@ int gvusb2_video_register(struct gvusb2_vid *dev)
 	dev->vdev.lock = &dev->v4l2_lock;
 
 	/* set standard for device */
-	dev->standard = V4L2_STD_NTSC_M;
+    dev->standard = gvusb2_parse_standard(standard);
 
 	/* set standard for sub-devices */
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_std,
